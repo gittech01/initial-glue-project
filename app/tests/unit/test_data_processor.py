@@ -28,6 +28,27 @@ class TestDataProcessor(unittest.TestCase):
         self.assertEqual(self.processor.dynamodb_handler, self.mock_dynamodb_handler)
         self.assertEqual(self.processor.config, self.config)
     
+    def test_read_data(self):
+        """Testa método _read_data."""
+        mock_df = MagicMock()
+        self.mock_glue_handler.read_from_catalog.return_value = mock_df
+        
+        df = self.processor._read_data(database="test_db", table_name="test_table")
+        
+        self.assertEqual(df, mock_df)
+        self.mock_glue_handler.read_from_catalog.assert_called_once_with(
+            database="test_db",
+            table_name="test_table"
+        )
+    
+    def test_get_congregado_key(self):
+        """Testa geração de chave para congregado."""
+        key = self.processor._get_congregado_key(
+            database="test_db",
+            table_name="test_table"
+        )
+        self.assertEqual(key, "test_db_test_table")
+    
     @patch('utils.business.data_processor.logger')
     def test_process_data_success(self, mock_logger):
         """Testa processamento bem-sucedido de dados."""
@@ -150,8 +171,11 @@ class TestDataProcessor(unittest.TestCase):
         )
         
         self.assertEqual(len(results), 2)
+        # Primeira tabela deve ter sucesso
         self.assertEqual(results["db1.table1"]['status'], 'success')
+        # Segunda tabela deve ter erro (process_multiple_tables captura exceções)
         self.assertEqual(results["db2.table2"]['status'], 'error')
+        self.assertIn('error', results["db2.table2"])
 
 if __name__ == '__main__':
     unittest.main()

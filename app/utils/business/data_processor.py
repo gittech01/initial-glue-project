@@ -4,21 +4,20 @@ Processador de dados - Regra de negócio principal.
 Esta classe demonstra como implementar uma regra de negócio que pode ser
 chamada múltiplas vezes sem impactar outras execuções, garantindo isolamento
 e idempotência através do JourneyController.
+
+Implementa Template Method Pattern através de BaseBusinessProcessor.
 """
 import logging
 from typing import Dict, Optional
 from pyspark.sql import DataFrame
 
-from utils.handlers.glue_handler import GlueDataHandler
-from utils.journey_controller import JourneyController
-from utils.dynamodb_handler import DynamoDBHandler
-from utils.config.settings import AppConfig
+from utils.business.base_processor import BaseBusinessProcessor
 
 
 logger = logging.getLogger(__name__)
 
 
-class DataProcessor:
+class DataProcessor(BaseBusinessProcessor):
     """
     Processador de dados que implementa a regra de negócio principal.
     
@@ -32,27 +31,37 @@ class DataProcessor:
     - Resiliência: Recupera de falhas automaticamente
     """
     
-    def __init__(
-        self,
-        glue_handler: GlueDataHandler,
-        journey_controller: JourneyController,
-        dynamodb_handler: DynamoDBHandler,
-        config: AppConfig
-    ):
-        """
-        Inicializa o processador de dados.
+    def _read_data(self, **kwargs) -> DataFrame:
+        """Lê dados do catálogo Glue."""
+        database = kwargs.get('database')
+        table_name = kwargs.get('table_name')
         
-        Args:
-            glue_handler: Handler para operações Glue
-            journey_controller: Controller de jornada para idempotência
-            dynamodb_handler: Handler para salvar congregado
-            config: Configurações da aplicação
-        """
-        self.glue_handler = glue_handler
-        self.journey_controller = journey_controller
-        self.dynamodb_handler = dynamodb_handler
-        self.config = config
-        logger.info("DataProcessor inicializado")
+        if not database or not table_name:
+            raise ValueError("database e table_name são obrigatórios")
+        
+        return self.glue_handler.read_from_catalog(
+            database=database,
+            table_name=table_name
+        )
+    
+    def _transform_data(self, df: DataFrame, **kwargs) -> Dict:
+        """Transforma dados agregando informações."""
+        return self._aggregate_data(df)
+    
+    def _get_congregado_key(self, **kwargs) -> str:
+        """Gera chave primária para congregado."""
+        database = kwargs.get('database')
+        table_name = kwargs.get('table_name')
+        return f"{database}_{table_name}"
+    
+    def _get_congregado_metadata(self, **kwargs) -> Dict:
+        """Gera metadados para congregado."""
+        metadata = super()._get_congregado_metadata(**kwargs)
+        metadata.update({
+            'database': kwargs.get('database'),
+            'table_name': kwargs.get('table_name')
+        })
+        return metadata
     
     def process_data(
         self,
@@ -63,8 +72,8 @@ class DataProcessor:
         """
         Processa dados de uma tabela do Glue Catalog.
         
-        Esta função pode ser chamada múltiplas vezes com os mesmos parâmetros
-        sem impactar outras execuções. Cada chamada é isolada e idempotente.
+        Esta função usa o template method do BaseBusinessProcessor.
+        Pode ser chamada múltiplas vezes sem impactar outras execuções.
         
         Args:
             database: Nome do banco de dados no Glue Catalog
@@ -73,72 +82,12 @@ class DataProcessor:
         
         Returns:
             Dicionário com resultado do processamento
-        
-        Exemplo de uso múltiplo (sem impacto entre execuções):
-            # Execução 1
-            processor.process_data("db", "table1", "s3://bucket/output1")
-            
-            # Execução 2 (paralela, não impacta execução 1)
-            processor.process_data("db", "table2", "s3://bucket/output2")
-            
-            # Execução 3 (mesmos parâmetros, idempotente)
-            processor.process_data("db", "table1", "s3://bucket/output1")
         """
-        logger.info(f"Iniciando processamento: database={database}, table={table_name}")
-        
-        try:
-            # Etapa 1: Ler dados do catálogo
-            logger.info("Etapa 1: Lendo dados do catálogo")
-            df = self.glue_handler.read_from_catalog(
-                database=database,
-                table_name=table_name
-            )
-            
-            record_count = df.count()
-            logger.info(f"Dados lidos: {record_count} registros")
-            
-            # Etapa 2: Transformar dados (exemplo: agregar)
-            logger.info("Etapa 2: Transformando dados")
-            aggregated_data = self._aggregate_data(df)
-            logger.info(f"Dados agregados: {aggregated_data}")
-            
-            # Etapa 3: Salvar congregado no DynamoDB (idempotente)
-            logger.info("Etapa 3: Salvando congregado no DynamoDB")
-            congregado_result = self.dynamodb_handler.save_congregado(
-                congregado_data=aggregated_data,
-                primary_key=f"{database}_{table_name}",
-                metadata={
-                    'database': database,
-                    'table_name': table_name,
-                    'record_count': record_count
-                }
-            )
-            logger.info(f"Congregado salvo: {congregado_result}")
-            
-            # Etapa 4: Escrever dados processados (se output_path fornecido)
-            if output_path:
-                logger.info(f"Etapa 4: Escrevendo dados em {output_path}")
-                self.glue_handler.write_to_s3(
-                    df=df,
-                    path=output_path,
-                    format=self.config.default_output_format
-                )
-                logger.info("Dados escritos com sucesso")
-            
-            result = {
-                'status': 'success',
-                'record_count': record_count,
-                'aggregated_data': aggregated_data,
-                'congregado_id': congregado_result.get('id'),
-                'output_path': output_path
-            }
-            
-            logger.info(f"Processamento concluído: {result}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Erro no processamento: {e}", exc_info=True)
-            raise
+        return self.process(
+            database=database,
+            table_name=table_name,
+            output_path=output_path
+        )
     
     def _aggregate_data(self, df: DataFrame) -> Dict:
         """

@@ -11,10 +11,12 @@ class TestMain(unittest.TestCase):
     @patch('src.main.GlueDataHandler')
     @patch('src.main.JourneyController')
     @patch('src.main.DynamoDBHandler')
-    @patch('src.main.DataProcessor')
+    @patch('src.main.ProcessorFactory')
+    @patch('src.main.BusinessRuleOrchestrator')
     def test_main_success(
         self,
-        mock_processor_class,
+        mock_orchestrator_class,
+        mock_factory_class,
         mock_dynamodb_class,
         mock_journey_class,
         mock_glue_handler_class,
@@ -28,6 +30,7 @@ class TestMain(unittest.TestCase):
         mock_job = MagicMock()
         mock_args = {
             'JOB_NAME': 'test_job',
+            'processor_type': 'data_processor',
             'database': 'test_db',
             'table_name': 'test_table',
             'output_path': 's3://bucket/output'
@@ -38,20 +41,30 @@ class TestMain(unittest.TestCase):
         mock_config.journey_table_name = 'journey_table'
         mock_config.congregado_table_name = 'congregado_table'
         mock_config.aws_region = 'us-east-1'
+        mock_config.default_output_format = 'parquet'
         mock_config_class.return_value = mock_config
         
         mock_glue_handler = MagicMock()
         mock_glue_handler_class.return_value = mock_glue_handler
         
         mock_journey_controller = MagicMock()
-        mock_journey_controller.execute_with_journey.return_value = {'status': 'success'}
         mock_journey_class.return_value = mock_journey_controller
         
         mock_dynamodb_handler = MagicMock()
         mock_dynamodb_class.return_value = mock_dynamodb_handler
         
+        # Mock ProcessorFactory
         mock_processor = MagicMock()
-        mock_processor_class.return_value = mock_processor
+        mock_processor.get_processor_name.return_value = 'DataProcessor'
+        mock_factory_class.create.return_value = mock_processor
+        
+        # Mock Orchestrator
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_rule.return_value = {
+            'status': 'success',
+            'result': {'status': 'success', 'record_count': 2}
+        }
+        mock_orchestrator_class.return_value = mock_orchestrator
         
         # Import e execução
         from src.main import main
@@ -64,10 +77,10 @@ class TestMain(unittest.TestCase):
         mock_glue_handler_class.assert_called_once_with(mock_glue_context)
         mock_journey_class.assert_called_once()
         mock_dynamodb_class.assert_called_once()
-        mock_processor_class.assert_called_once()
-        mock_journey_controller.execute_with_journey.assert_called_once()
+        mock_factory_class.create.assert_called_once()
+        mock_orchestrator.execute_rule.assert_called_once()
         mock_job.commit.assert_called_once()
-        self.assertEqual(result, {'status': 'success'})
+        self.assertEqual(result['status'], 'success')
     
     @patch('src.main.initialize_glue_context')
     def test_main_exception(self, mock_init_glue):

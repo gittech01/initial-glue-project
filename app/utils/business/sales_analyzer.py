@@ -1,24 +1,20 @@
 """
-Analisador de Vendas - Exemplo de Nova Regra de Negócio.
+Analisador de Vendas - Regra de Negócio Implementada.
 
-Este é um exemplo completo de como implementar uma nova regra de negócio
-seguindo todos os padrões e boas práticas da aplicação.
+Implementa análise de vendas usando Template Method Pattern.
 """
 import logging
 from typing import Dict, Optional
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from utils.handlers.glue_handler import GlueDataHandler
-from utils.journey_controller import JourneyController
-from utils.dynamodb_handler import DynamoDBHandler
-from utils.config.settings import AppConfig
+from utils.business.base_processor import BaseBusinessProcessor
 
 
 logger = logging.getLogger(__name__)
 
 
-class SalesAnalyzer:
+class SalesAnalyzer(BaseBusinessProcessor):
     """
     Analisador de vendas - Exemplo de nova regra de negócio.
     
@@ -29,24 +25,49 @@ class SalesAnalyzer:
     - Rastreabilidade: Logs completos
     """
     
-    def __init__(
-        self,
-        glue_handler: GlueDataHandler,
-        journey_controller: JourneyController,
-        dynamodb_handler: DynamoDBHandler,
-        config: AppConfig
-    ):
-        """
-        Inicializa o analisador de vendas.
+    def _read_data(self, **kwargs) -> DataFrame:
+        """Lê dados do catálogo e filtra por período."""
+        database = kwargs.get('database')
+        table_name = kwargs.get('table_name')
+        periodo = kwargs.get('periodo')
         
-        IMPORTANTE: Todas as dependências são injetadas.
-        Não cria instâncias internamente.
-        """
-        self.glue_handler = glue_handler
-        self.journey_controller = journey_controller
-        self.dynamodb_handler = dynamodb_handler
-        self.config = config
-        logger.info("SalesAnalyzer inicializado")
+        if not database or not table_name or not periodo:
+            raise ValueError("database, table_name e periodo são obrigatórios")
+        
+        df = self.glue_handler.read_from_catalog(
+            database=database,
+            table_name=table_name
+        )
+        
+        # Filtrar por período se coluna de data existir
+        if 'data' in df.columns or 'date' in df.columns:
+            date_col = 'data' if 'data' in df.columns else 'date'
+            df = df.filter(F.col(date_col).startswith(periodo))
+        
+        return df
+    
+    def _transform_data(self, df: DataFrame, **kwargs) -> Dict:
+        """Analisa dados de vendas."""
+        periodo = kwargs.get('periodo')
+        return self._analisar_dados(df, periodo)
+    
+    def _get_congregado_key(self, **kwargs) -> str:
+        """Gera chave primária para análise de vendas."""
+        database = kwargs.get('database')
+        table_name = kwargs.get('table_name')
+        periodo = kwargs.get('periodo')
+        return f"vendas_{database}_{table_name}_{periodo}"
+    
+    def _get_congregado_metadata(self, **kwargs) -> Dict:
+        """Gera metadados específicos para análise de vendas."""
+        metadata = super()._get_congregado_metadata(**kwargs)
+        metadata.update({
+            'database': kwargs.get('database'),
+            'table_name': kwargs.get('table_name'),
+            'periodo': kwargs.get('periodo'),
+            'tipo': 'analise_vendas'
+        })
+        return metadata
     
     def analisar_vendas(
         self,
@@ -58,8 +79,8 @@ class SalesAnalyzer:
         """
         Analisa vendas de uma tabela para um período específico.
         
-        Esta função pode ser chamada múltiplas vezes sem impacto entre execuções.
-        Cada análise é isolada e idempotente.
+        Usa o template method do BaseBusinessProcessor.
+        Pode ser chamada múltiplas vezes sem impacto entre execuções.
         
         Args:
             database: Nome do banco de dados
@@ -69,84 +90,17 @@ class SalesAnalyzer:
         
         Returns:
             Dicionário com resultado da análise
-        
-        Exemplo de uso:
-            # Análise 1 - Não impacta outras
-            result1 = analyzer.analisar_vendas("db", "vendas", "2024-01", "s3://out1")
-            
-            # Análise 2 - Paralela, isolada
-            result2 = analyzer.analisar_vendas("db", "vendas", "2024-02", "s3://out2")
-            
-            # Análise 3 - Idempotente (mesmos parâmetros)
-            result3 = analyzer.analisar_vendas("db", "vendas", "2024-01", "s3://out1")
-            # result3 == result1 (sem reprocessar)
         """
-        logger.info(f"Iniciando análise de vendas: {database}.{table_name} para período {periodo}")
+        result = self.process(
+            database=database,
+            table_name=table_name,
+            periodo=periodo,
+            output_path=output_path
+        )
         
-        try:
-            # ETAPA 1: Ler dados do catálogo
-            logger.info("Etapa 1: Lendo dados do catálogo")
-            df = self.glue_handler.read_from_catalog(
-                database=database,
-                table_name=table_name
-            )
-            
-            record_count = df.count()
-            logger.info(f"Dados lidos: {record_count} registros")
-            
-            # ETAPA 2: Filtrar por período (se necessário)
-            if 'data' in df.columns or 'date' in df.columns:
-                date_col = 'data' if 'data' in df.columns else 'date'
-                df = df.filter(F.col(date_col).startswith(periodo))
-                filtered_count = df.count()
-                logger.info(f"Registros após filtro de período: {filtered_count}")
-            
-            # ETAPA 3: Analisar dados (SUA LÓGICA DE NEGÓCIO)
-            logger.info("Etapa 2: Analisando dados de vendas")
-            analise = self._analisar_dados(df, periodo)
-            logger.info(f"Análise concluída: {analise}")
-            
-            # ETAPA 4: Salvar congregado no DynamoDB (idempotente)
-            logger.info("Etapa 3: Salvando análise no DynamoDB")
-            congregado_result = self.dynamodb_handler.save_congregado(
-                congregado_data=analise,
-                primary_key=f"vendas_{database}_{table_name}_{periodo}",
-                metadata={
-                    'database': database,
-                    'table_name': table_name,
-                    'periodo': periodo,
-                    'record_count': record_count,
-                    'tipo': 'analise_vendas'
-                }
-            )
-            logger.info(f"Análise salva: {congregado_result}")
-            
-            # ETAPA 5: Escrever resultado (se output_path fornecido)
-            if output_path:
-                logger.info(f"Etapa 4: Escrevendo análise em {output_path}")
-                self.glue_handler.write_to_s3(
-                    df=df,
-                    path=output_path,
-                    format=self.config.default_output_format
-                )
-                logger.info("Análise escrita com sucesso")
-            
-            # Retornar resultado
-            result = {
-                'status': 'success',
-                'periodo': periodo,
-                'record_count': record_count,
-                'analise': analise,
-                'congregado_id': congregado_result.get('id'),
-                'output_path': output_path
-            }
-            
-            logger.info(f"Análise de vendas concluída: {result}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Erro na análise de vendas: {e}", exc_info=True)
-            raise  # Re-raise para retry automático
+        # Adicionar período ao resultado
+        result['periodo'] = periodo
+        return result
     
     def _analisar_dados(self, df: DataFrame, periodo: str) -> Dict:
         """

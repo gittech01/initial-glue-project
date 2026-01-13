@@ -52,6 +52,7 @@ def test_end_to_end_flow(spark, mock_glue_context):
         
         mock_get_options.return_value = {
             'JOB_NAME': 'test_job',
+            'processor_type': 'data_processor',  # Adicionar processor_type
             'database': 'test_db',
             'table_name': 'test_table',
             'output_path': 's3://bucket/output'
@@ -67,15 +68,22 @@ def test_end_to_end_flow(spark, mock_glue_context):
             mock_handler.read_from_catalog.return_value = df
             mock_handler_class.return_value = mock_handler
             
-            # Mock do JourneyController
-            with patch('src.main.JourneyController') as mock_journey_class:
+            # Mock do JourneyController e Orchestrator
+            with patch('src.main.JourneyController') as mock_journey_class, \
+                 patch('src.main.BusinessRuleOrchestrator') as mock_orchestrator_class:
                 mock_journey = MagicMock()
-                mock_journey.execute_with_journey.return_value = {
-                    'status': 'success',
-                    'record_count': 2,
-                    'congregado_id': 'test_db_test_table'
-                }
                 mock_journey_class.return_value = mock_journey
+                
+                mock_orchestrator = MagicMock()
+                mock_orchestrator.execute_rule.return_value = {
+                    'status': 'success',
+                    'result': {
+                        'status': 'success',
+                        'record_count': 2,
+                        'congregado_id': 'test_db_test_table'
+                    }
+                }
+                mock_orchestrator_class.return_value = mock_orchestrator
                 
                 # Mock do DynamoDBHandler
                 with patch('src.main.DynamoDBHandler') as mock_dynamodb_class:
@@ -104,7 +112,7 @@ def test_end_to_end_flow(spark, mock_glue_context):
                     mock_handler_class.assert_called_once()
                     mock_journey_class.assert_called_once()
                     mock_dynamodb_class.assert_called_once()
-                    mock_journey.execute_with_journey.assert_called_once()
+                    mock_orchestrator.execute_rule.assert_called_once()
                     mock_job.commit.assert_called_once()
 
 
@@ -148,15 +156,17 @@ def test_data_processor_isolation(spark, mock_glue_context):
     with patch.object(glue_handler, 'read_from_catalog') as mock_read:
         mock_read.side_effect = [df1, df2]
         
-        # Primeira execução
-        result1 = processor.process_data("db1", "table1", "s3://out1")
-        
-        # Segunda execução (deve ser isolada)
-        result2 = processor.process_data("db2", "table2", "s3://out2")
-        
-        # Verificar que são independentes
-        assert result1['status'] == 'success'
-        assert result2['status'] == 'success'
-        assert result1['record_count'] == 1
-        assert result2['record_count'] == 1
-        assert result1 != result2  # Resultados diferentes
+        # Mock write_to_s3 para evitar erros
+        with patch.object(glue_handler, 'write_to_s3'):
+            # Primeira execução
+            result1 = processor.process_data("db1", "table1", "s3://out1")
+            
+            # Segunda execução (deve ser isolada)
+            result2 = processor.process_data("db2", "table2", "s3://out2")
+            
+            # Verificar que são independentes
+            assert result1['status'] == 'success'
+            assert result2['status'] == 'success'
+            assert result1['record_count'] == 1
+            assert result2['record_count'] == 1
+            assert result1 != result2  # Resultados diferentes
