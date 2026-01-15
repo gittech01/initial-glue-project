@@ -19,7 +19,7 @@ class AppConfig:
         """Inicializa configurações a partir de variáveis de ambiente."""
         
         # AWS Configuration
-        self.aws_region: str = os.getenv('AWS_REGION', 'us-east-1')
+        self.aws_region: str = os.getenv('AWS_REGION', 'sa-east-1')
         self.aws_access_key_id: Optional[str] = os.getenv('AWS_ACCESS_KEY_ID')
         self.aws_secret_access_key: Optional[str] = os.getenv('AWS_SECRET_ACCESS_KEY')
         

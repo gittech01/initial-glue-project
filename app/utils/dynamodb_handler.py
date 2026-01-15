@@ -6,7 +6,7 @@ import json
 import time
 import hashlib
 from datetime import datetime
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, List
 import logging
 
 try:
@@ -39,7 +39,7 @@ class DynamoDBHandler:
     def __init__(
         self,
         table_name: str,
-        region_name: str = "us-east-1",
+        region_name: str = "sa-east-1",
         max_retries: int = 3,
         retry_delay: int = 1,
         dynamodb_client=None,
@@ -106,10 +106,8 @@ class DynamoDBHandler:
     def _generate_idempotency_key(self, data: Dict) -> str:
         """
         Gera uma chave de idempotência baseada no conteúdo dos dados.
-        
         Args:
             data: Dados para gerar a chave
-        
         Returns:
             Hash SHA256 dos dados serializados
         """
@@ -143,12 +141,10 @@ class DynamoDBHandler:
     ) -> bool:
         """
         Salva um item no DynamoDB com retry e tratamento de erros.
-        
         Args:
             item: Item a ser salvo
             condition_expression: Expressão condicional opcional
             condition_values: Valores para a expressão condicional
-        
         Returns:
             True se bem-sucedido, False caso contrário
         """
@@ -207,14 +203,12 @@ class DynamoDBHandler:
     ) -> Dict:
         """
         Salva dados agregados (congregado) no DynamoDB de forma idempotente.
-        
         Args:
             congregado_data: Dados agregados a serem salvos
             primary_key: Chave primária (se não fornecida, será gerada)
             idempotency_key: Chave de idempotência (se não fornecida, será gerada)
             version: Versão dos dados (para controle de concorrência)
             metadata: Metadados adicionais
-        
         Returns:
             Dicionário com informações da operação (id, idempotency_key, version, etc.)
         """

@@ -32,30 +32,31 @@ class GlueDataHandler:
         self.glue_context = glue_context
         self.spark = glue_context.spark_session
 
-    def read_from_catalog(self, database: str, table_name: str, additional_options: dict = None) -> DataFrame:
+    def read_from_catalog(self, database: str, table_name: str, filter: str = None) -> DataFrame:
         """
         Lê dados do AWS Glue Data Catalog.
         """
         dynamic_frame = self.glue_context.create_dynamic_frame.from_catalog(
             database=database,
             table_name=table_name,
-            additional_options=additional_options or {}
+            push_down_predicate=filter or ""
         )
         return dynamic_frame.toDF()
 
-    def read_from_s3(self, path: str, format: str = "parquet", format_options: dict = None) -> DataFrame:
+    def read_from_s3(self, path: str | list, format: str = "parquet", format_options: dict = None) -> DataFrame:
         """
         Lê dados diretamente do S3.
         """
+
         dynamic_frame = self.glue_context.create_dynamic_frame.from_options(
             connection_type="s3",
-            connection_options={"paths": [path]},
+            connection_options={"paths": [path] if isinstance(path, str) else path},
             format=format,
             format_options=format_options or {}
         )
         return dynamic_frame.toDF()
 
-    def write_to_s3(self, df: DataFrame, path: str, format: str = "parquet", mode: str = "overwrite", partition_cols: list = None):
+    def write_to_s3(self, df: DataFrame, path: str, format: str = "parquet", partition_cols: list = None):
         """
         Escreve um DataFrame Spark no S3 usando o GlueContext para melhor integração com o catálogo.
         """

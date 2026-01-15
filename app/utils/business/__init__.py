@@ -1,8 +1,8 @@
 """Módulo de regras de negócio da aplicação."""
 
 from .base_processor import BaseBusinessProcessor
-from .data_processor import DataProcessor
-from .sales_analyzer import SalesAnalyzer
+# from .data_processor import DataProcessor
+# from .sales_analyzer import SalesAnalyzer
 from .processor_factory import ProcessorFactory
 from .orchestrator import BusinessRuleOrchestrator, ExecutionResult
 
@@ -11,9 +11,9 @@ try:
     from .inventory_processor import InventoryProcessor
     __all__ = [
         'BaseBusinessProcessor',
-        'DataProcessor',
-        'SalesAnalyzer',
-        'InventoryProcessor',
+        # 'DataProcessor',
+        # 'SalesAnalyzer',
+        # 'InventoryProcessor',
         'ProcessorFactory',
         'BusinessRuleOrchestrator',
         'ExecutionResult'
@@ -21,8 +21,8 @@ try:
 except ImportError:
     __all__ = [
         'BaseBusinessProcessor',
-        'DataProcessor',
-        'SalesAnalyzer',
+        # 'DataProcessor',
+        # 'SalesAnalyzer',
         'ProcessorFactory',
         'BusinessRuleOrchestrator',
         'ExecutionResult'

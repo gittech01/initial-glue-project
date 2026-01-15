@@ -37,10 +37,7 @@ from utils.business.orchestrator import BusinessRuleOrchestrator
 
 
 # Configurar logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -84,6 +81,7 @@ def main():
     Agora é agnóstico para múltiplas regras de negócio através do ProcessorFactory.
     """
     try:
+        # ---------------------------------------------------------------------
         # Inicializar contexto Glue
         sc, glue_context, job, args = initialize_glue_context()
         
@@ -108,6 +106,7 @@ def main():
             journey_controller=journey_controller,
             continue_on_error=continue_on_error
         )
+        # ----------------------------------------------------------------------
         
         # Obter tipo de processador (padrão: data_processor)
         processor_type = args.get('processor_type', 'data_processor')

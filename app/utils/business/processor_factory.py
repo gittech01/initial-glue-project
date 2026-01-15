@@ -117,27 +117,34 @@ class ProcessorFactory:
         return processor_type.lower() in cls._processors
 
 
-# Auto-registro de processadores (será feito quando módulos forem importados)
+# Autoregistro de processadores (será feito quando módulos forem importados)
 def _auto_register_processors():
     """Registra automaticamente os processadores disponíveis."""
-    try:
-        from utils.business.data_processor import DataProcessor
-        ProcessorFactory.register('data_processor', DataProcessor)
-        ProcessorFactory.register('data', DataProcessor)  # Alias curto
-    except ImportError as e:
-        logger.warning(f"DataProcessor não encontrado para registro: {e}")
+    # try:
+    #     from utils.business.data_processor import DataProcessor
+    #     ProcessorFactory.register('data_processor', DataProcessor)
+    #     ProcessorFactory.register('data', DataProcessor)  # Alias curto
+    # except ImportError as e:
+    #     logger.warning(f"DataProcessor não encontrado para registro: {e}")
     
-    try:
-        from utils.business.sales_analyzer import SalesAnalyzer
-        ProcessorFactory.register('sales_analyzer', SalesAnalyzer)
-        ProcessorFactory.register('sales', SalesAnalyzer)  # Alias curto
-    except ImportError as e:
-        logger.warning(f"SalesAnalyzer não encontrado para registro: {e}")
+    # try:
+    #     from utils.business.sales_analyzer import SalesAnalyzer
+    #     ProcessorFactory.register('sales_analyzer', SalesAnalyzer)
+    #     ProcessorFactory.register('sales', SalesAnalyzer)  # Alias curto
+    # except ImportError as e:
+    #     logger.warning(f"SalesAnalyzer não encontrado para registro: {e}")
     
+    # try:
+    #     from utils.business.inventory_processor import InventoryProcessor
+    #     ProcessorFactory.register('inventory_processor', InventoryProcessor)
+    #     ProcessorFactory.register('inventory', InventoryProcessor)  # Alias curto
+    # except ImportError as e:
+    #     logger.debug(f"InventoryProcessor não encontrado (opcional): {e}")
+
     try:
-        from utils.business.inventory_processor import InventoryProcessor
-        ProcessorFactory.register('inventory_processor', InventoryProcessor)
-        ProcessorFactory.register('inventory', InventoryProcessor)  # Alias curto
+        from utils.business.consolidador_posicao_operacao import ConsolidadorPosicaoOperacaoProcessor
+        ProcessorFactory.register("consolidador_posicao_operacao", ConsolidadorPosicaoOperacaoProcessor)
+        ProcessorFactory.register("consolidador", ConsolidadorPosicaoOperacaoProcessor) # Alias curto
     except ImportError as e:
         logger.debug(f"InventoryProcessor não encontrado (opcional): {e}")
 
