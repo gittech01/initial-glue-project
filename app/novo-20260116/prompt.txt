@@ -1,0 +1,285 @@
+Perfeito. Abaixo está um **prompt técnico, completo e fiel ao seu contexto**, para você reutilizar com outro LLM, com um time de desenvolvimento ou como especificação de implementação. Ele está estruturado, sem sair da regra de negócio, com nível de detalhe suficiente para orientar arquitetura, código e validações.
+
+---
+
+## PROMPT – CONSOLIDAÇÃO SoR x SoT COM PARTIÇÃO MAIS RECENTE E REGRAS DINÂMICAS
+
+Você é um arquiteto de dados especializado em **AWS Glue, PySpark e arquitetura orientada a regras de negócio**.
+
+Seu objetivo é **projetar e implementar uma regra de consolidação de dados** que opere sobre múltiplas tabelas, utilizando uma arquitetura baseada em:
+
+* ProcessorFactory
+* BusinessRuleOrchestrator
+* JourneyController (controle de idempotência e jornada)
+* GlueDataHandler (I/O com Glue e Data Catalog)
+* DynamoDB (controle de execução e métricas)
+
+A solução **não pode usar `spark.sql`** e deve operar apenas com **DataFrames e Glue APIs**.
+
+---
+
+### 1️⃣ Contexto Geral do Negócio
+
+Existe uma aplicação de ingestão e consolidação que:
+
+* Executa **uma mesma regra de negócio** para **10 tabelas consolidadas diferentes**.
+* Cada tabela consolidada:
+
+  * Possui **1 tabela SoR (online)** e **1 tabela SoT (batch)** com **schema idêntico**.
+  * Pode possuir **0 a 3 tabelas auxiliares** para SoR e/ou SoT.
+* Cada execução:
+
+  * Deve ser **idempotente**.
+  * **Não pode interromper o processamento das demais tabelas em caso de falha**.
+  * Deve registrar a jornada no DynamoDB.
+* O processamento é feito via **AWS Glue Job**.
+
+---
+
+### 2️⃣ Regras de Particionamento (Obrigatórias)
+
+Todas as leituras devem respeitar a seguinte regra:
+
+> **Sempre ler a ÚLTIMA PARTIÇÃO disponível nas tabelas SoR e SoT.**
+> Isso deve ser feito:
+>
+> * Sem usar `spark.sql`.
+> * Utilizando Glue APIs (`boto3`/`get_partitions`) ou métodos no `GlueDataHandler`.
+
+Se as últimas partições de SoR e SoT forem **diferentes**, deve-se usar **apenas os dados da partição mais recente** para gerar a consolidação.
+
+---
+
+### 3️⃣ Estrutura das Tabelas (Exemplo Base)
+
+#### Tabela Consolidada (Destino)
+
+```
+tbl_processado_operacao_consolidada
+```
+
+#### Tabelas Principais (Mesmo Schema)
+
+* SoR (Online): `tbl_processado_operacao_sor`
+* SoT (Batch): `tbl_processado_operacao_apropriada`
+
+> Observação: As três possuem **schema idêntico**, mas respondem a **fontes de verdade diferentes**.
+
+---
+
+### 4️⃣ Campos-Chave da Regra de Decisão
+
+A escolha entre SoR e SoT é feita por **ranking** baseado nos seguintes campos:
+
+* `dat_vlr_even_oper`
+* `num_prio_even_oper`
+* `dat_recm_even_oper`
+
+Ordenação:
+
+```
+dat_vlr_even_oper DESC
+num_prio_even_oper DESC
+dat_recm_even_oper DESC
+```
+
+---
+
+### 5️⃣ Tabelas Auxiliares
+
+Cada camada possui suas próprias auxiliares:
+
+#### Auxiliares da SoR
+
+* `tbl_operecao_sor`
+* `tbl_evento_processado_sor`
+* `tbl_posicao_operacao_sor`
+
+#### Auxiliares da SoT
+
+* `tbl_operecao_apropriada`
+* `tbl_evento_processado_apropriada`
+* `tbl_posicao_operacao_apropriada`
+
+Essas tabelas são utilizadas para **construir a base de comparação**, a partir da qual será feita a decisão entre SoR e SoT.
+
+---
+
+### 6️⃣ Lógica de Comparação (Regra de Negócio)
+
+#### Consulta Base – SoR (Online)
+
+```
+select
+    oper.num_oper,
+    oper.cod_idef_ver_oper,
+    posi.dat_vlr_even_oper,
+    posi.num_prio_even_oper,
+    posi.dat_recm_even_oper
+from db_online.tbl_operecao_sor oper
+inner join db_online.tbl_evento_processado_sor event
+    on oper.num_oper = event.num_oper
+   and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+inner join db_online.tbl_posicao_operacao_sor posi
+    on oper.num_oper = posi.num_oper
+   and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+where anomesdia = '20260115'
+```
+
+#### Consulta Base – SoT (Batch)
+
+```
+select
+    oper.num_oper,
+    oper.cod_idef_ver_oper,
+    posi.dat_vlr_even_oper,
+    posi.num_prio_even_oper,
+    posi.dat_recm_even_oper
+from db_online.tbl_operecao_apropriada oper
+inner join db_online.tbl_evento_processado_apropriada event
+    on oper.num_oper = event.num_oper
+   and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+inner join db_online.tbl_posicao_operacao_apropriada posi
+    on oper.num_oper = posi.num_oper
+   and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+where anomesdia = '20260115'
+```
+
+---
+
+### 7️⃣ União e Ranking (Regra Decisória)
+
+Após a construção das duas bases:
+
+1. Unir SoR + SoT.
+2. Aplicar `row_number()` particionado por:
+
+   * `num_oper`
+   * `cod_idef_ver_oper`
+3. Ordenar pelos campos de decisão.
+
+```
+row_number() over (
+    partition by num_oper, cod_idef_ver_oper
+    order by dat_vlr_even_oper desc,
+             num_prio_even_oper desc,
+             dat_recm_even_oper desc
+)
+```
+
+4. Selecionar apenas `rank = 1`.
+5. O resultado determina:
+
+   * Qual **origem venceu** (`online` ou `batch`).
+   * Quais registros devem ser filtrados nas tabelas principais.
+
+---
+
+### 8️⃣ Construção da Tabela Consolidada
+
+1. O resultado do ranking **define quais chaves (num_oper, cod_idef_ver_oper)** devem ser extraídas:
+
+   * Da SoR (`tbl_processado_operacao_sor`)
+   * Ou da SoT (`tbl_processado_operacao_apropriada`)
+2. Esses registros são então **gravados em**:
+
+```
+tbl_processado_operacao_consolidada
+```
+
+---
+
+### 9️⃣ Configuração Dinâmica (Settings)
+
+Todas as regras devem ser **100% orientadas por configuração**, via estrutura como:
+
+* Tabela consolidada
+* Principais (SoR / SoT)
+* Auxiliares (opcionais)
+* Joins dinâmicos
+* Chaves principais
+* Campos de decisão
+
+Exemplo: múltiplas tabelas consolidadas (10 no total), cada uma podendo:
+
+* Ter ou não auxiliares.
+* Ter joins diferentes.
+* Ter chaves diferentes.
+
+Nenhuma tabela deve estar “hardcoded”.
+
+---
+
+### 🔟 Arquitetura Obrigatória
+
+A implementação deve:
+
+* Usar uma classe de regra: `NovaRegraConsolidacao`, herdando de `BaseBusinessProcessor`.
+* Expor o método:
+
+```
+processar(database: str, tabela_consolidada: str, execution_date: str)
+```
+
+* Ser executada pelo `main` através de:
+
+  * `ProcessorFactory`
+  * `BusinessRuleOrchestrator`
+  * `JourneyController`
+
+* O `main` deve:
+
+  * Iterar sobre **todas as tabelas consolidadas**.
+  * Gerar **uma idempotency_key por tabela**.
+  * **Não interromper o processamento das demais em caso de erro**.
+  * Registrar métricas e estado no DynamoDB.
+
+---
+
+### 1️⃣1️⃣ Restrições Técnicas
+
+* ❌ **Não usar `spark.sql`**
+* ✅ Usar apenas:
+
+  * DataFrames
+  * GlueContext
+  * boto3 (Glue API)
+* ✅ Implementar método para:
+
+  * Obter **última partição** via Glue (`get_partitions`).
+* ✅ Implementar:
+
+  * Leitura dinâmica das tabelas
+  * Joins configuráveis
+  * Ranking com `Window`
+  * Escrita em S3 / Glue Catalog
+  * Registro no DynamoDB
+
+---
+
+### 1️⃣2️⃣ Objetivo Final
+
+Entregar uma solução que:
+
+* Execute a mesma regra de negócio para **10 tabelas consolidadas diferentes**.
+* Leia **sempre a última partição** das tabelas SoR e SoT.
+* Decida dinamicamente entre SoR e SoT por ranking.
+* Seja:
+
+  * Idempotente
+  * Tolerante a falhas
+  * Totalmente configurável
+  * Aderente à arquitetura existente (ProcessorFactory, Orchestrator, JourneyController).
+
+---
+
+Se quiser, no próximo passo posso:
+
+* Transformar este prompt diretamente em:
+
+  * **Classe `NovaRegraConsolidacao` completa**
+  * **Adaptação do seu `main` para executar as 10 consolidações**
+  * **Implementação correta de `get_latest_partition` no `GlueDataHandler` sem spark.sql**
+
+Basta dizer:
+**“Pode gerar a implementação a partir deste prompt.”**
