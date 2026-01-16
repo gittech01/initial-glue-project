@@ -1,0 +1,126 @@
+Só adicionando mais contexto aqui:
+
+Acontece que independe de ser uma classe que aplica a regra de negocio ela precisa aplica em 10 tabelas (as consolidadas) diferentes e cada tabela precisa ler entre 1 a 3 conforme observado no arquivo settings.py.
+Cada tabela da consolidada e composto regra do data valor então é um filtro que se aplica. O problema é que eu preciso sempre ler a ultima partição presente nas tabelas não e reforco nas online e batch. como que eu aplico isso?
+
+Exemplo da querie sql:
+
+Tabela a ser feita ingestão: tbl_processado_operacao_consolidada
+Tabela da camada SoR (Online): tbl_processado_operacao_sor
+Tabela da camada SoT (Batch): tbl_processado_operacao_apropriada
+
+Obs: As três tem o mesmo schema (são completamente idêntica), porém respondem a perguntas diferentes.
+
+Como já sabido temos os campos principais que precisam ser aplicadas a regra (dat_vlr_even_oper,
+num_prio_even_oper, dat_recm_even_oper).
+
+Acontece que cada tabela de sor e sot, têm as suas auxiliares para base de operação.
+Auxiliares da tabela sor: tbl_operecao_sor, tbl_evento_processado_sor, tbl_posicao_operacao_sor
+Auxiliares da tabela sot: tbl_operecao_apropriada, tbl_evento_processado_apropriada, tbl_posicao_operacao_apropriada.
+
+Elas montam a comparação conforme abaixo:
+
+sql-sor:
+select
+    oper.num_oper,
+    oper.cod_idef_ver_oper,
+
+    posi.dat_vlr_even_oper,
+    posi.num_prio_even_oper,
+    posi.dat_recm_even_oper
+from db_online.tbl_operecao_sor oper
+inner join  db_online.tbl_evento_processado_sor event
+    on  oper.num_oper = event.num_oper
+    and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+inner join  db_online.tbl_posicao_operacao_sor posi
+    on  oper.num_oper = posi.num_oper
+    and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+where anomesdia = '20260115' -- origem da tabela principal
+
+sql-sot:
+select
+    oper.num_oper,
+    oper.cod_idef_ver_oper,
+
+    posi.dat_vlr_even_oper,
+    posi.num_prio_even_oper,
+    posi.dat_recm_even_oper
+from db_online.tbl_operecao_apropriada oper
+inner join  db_online.tbl_evento_processado_apropriada event
+    on  oper.num_oper = event.num_oper
+    and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+inner join  db_online.tbl_posicao_operacao_apropriada posi
+    on  oper.num_oper = posi.num_oper
+    and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+where anomesdia = '20260115' -- origem da tabela principal
+
+depois da comparação entre:
+with cte_sql_sor as (
+    select oper.num_oper,
+            oper.cod_idef_ver_oper,
+
+            posi.dat_vlr_even_oper,
+            posi.num_prio_even_oper,
+            posi.dat_recm_even_oper,
+            'online' as origem
+     from db_online.tbl_operecao_sor oper
+              inner join db_online.tbl_evento_processado_sor event
+                         on oper.num_oper = event.num_oper
+                             and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+              inner join db_online.tbl_posicao_operacao_sor posi
+                         on oper.num_oper = posi.num_oper
+                             and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+     where anomesdia = '20260115' -- origem da tabela principal
+)
+, cte_sql_sot as (
+    select oper.num_oper,
+         oper.cod_idef_ver_oper,
+
+         posi.dat_vlr_even_oper,
+         posi.num_prio_even_oper,
+         posi.dat_recm_even_oper,
+         'batch' as origem
+    from db_online.tbl_operecao_apropriada oper
+           inner join db_online.tbl_evento_processado_apropriada event
+                      on oper.num_oper = event.num_oper
+                          and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+           inner join db_online.tbl_posicao_operacao_apropriada posi
+                      on oper.num_oper = posi.num_oper
+                          and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+    where anomesdia = '20260115' -- origem da tabela principal
+)
+, union_cte as (
+select *
+from cte_sql_sor
+union
+select *
+from cte_sql_sot
+)
+
+, rank_oper as (
+    select
+        origem,
+        num_oper,
+        cod_idef_ver_oper,
+        row_number() over (
+            partition by
+                num_oper
+                , cod_idef_ver_oper
+            order by
+                dat_vlr_even_oper desc
+                , num_prio_even_oper desc
+                , dat_recm_even_oper desc
+        ) as rank
+    from union_cte
+)
+
+-- resultado
+select
+    origem,
+    num_oper,
+    cod_idef_ver_oper
+from rank_oper
+where rank = 1
+
+Depois resultado serve como filtro com bases da SoR (tbl_processado_operacao_sor)
+e SoT (tbl_processado_operacao_apropriada) com isso é montado a tbl_processado_operacao_consolidada

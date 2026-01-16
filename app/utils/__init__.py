@@ -15,7 +15,6 @@ from .dynamodb_handler import (
 
 from .config import AppConfig
 from .handlers import GlueDataHandler
-from .business import DataProcessor
 
 __all__ = [
     'JourneyController',
@@ -24,5 +23,4 @@ __all__ = [
     'DynamoDBHandler',
     'AppConfig',
     'GlueDataHandler',
-    'DataProcessor'
 ]

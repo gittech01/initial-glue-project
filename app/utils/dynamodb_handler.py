@@ -40,6 +40,7 @@ class DynamoDBHandler:
         self,
         table_name: str,
         region_name: str = "sa-east-1",
+        flag_salva: bool = False,
         max_retries: int = 3,
         retry_delay: int = 1,
         dynamodb_client=None,
@@ -56,8 +57,9 @@ class DynamoDBHandler:
             dynamodb_client: Cliente DynamoDB opcional (para testes)
             idempotency_key_field: Nome do campo usado para idempotência
         """
-        self.table_name = table_name
+        self.table_name  = table_name
         self.region_name = region_name
+        self.flag_salva  = flag_salva
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.idempotency_key_field = idempotency_key_field
@@ -279,12 +281,13 @@ class DynamoDBHandler:
             condition_values[':new_version'] = item['version']
         
         # Salvar item
-        success = self._put_item_with_retry(item, condition_expr, condition_values)
+        if self.flag_salva:
+            success = self._put_item_with_retry(item, condition_expr, condition_values)
         
-        if not success:
-            raise Exception(f"Falha ao salvar congregado após {self.max_retries} tentativas")
-        
-        self.logger.info(f"Congregado salvo com sucesso. ID: {item.get('id')}, Version: {item['version']}")
+            if not success:
+                raise Exception(f"Falha ao salvar congregado após {self.max_retries} tentativas")
+
+            self.logger.info(f"Congregado salvo com sucesso. ID: {item.get('id')}, Version: {item['version']}")
         
         return {
             'id': item.get('id'),

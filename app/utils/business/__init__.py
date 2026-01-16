@@ -8,7 +8,7 @@ from .orchestrator import BusinessRuleOrchestrator, ExecutionResult
 
 # Importar InventoryProcessor se disponível (exemplo)
 try:
-    from .inventory_processor import InventoryProcessor
+    from app.utils.business.exemplo_implementa_nova_negocio.inventory_processor import InventoryProcessor
     __all__ = [
         'BaseBusinessProcessor',
         # 'DataProcessor',

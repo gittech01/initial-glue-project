@@ -4,7 +4,9 @@ Handler para operações de leitura e escrita no AWS Glue.
 Mantido em utils/handlers/ para separação de responsabilidades.
 """
 import sys
+import boto3
 from unittest.mock import MagicMock
+from datetime import datetime, timedelta
 try:
     from awsglue.transforms import *
     from awsglue.utils import getResolvedOptions
@@ -21,6 +23,9 @@ except ImportError:
 
 from pyspark.context import SparkContext
 from pyspark.sql import DataFrame
+
+
+glue_client = boto3.client("glue")
 
 
 class GlueDataHandler:
@@ -73,7 +78,7 @@ class GlueDataHandler:
             transformation_ctx="write_to_s3"
         )
 
-    def write_to_catalog(self, df: DataFrame, database: str, table_name: str, mode: str = "overwrite"):
+    def write_to_catalog(self, df: DataFrame, database: str, table_name: str):
         """
         Escreve dados e atualiza o Glue Data Catalog.
         """
@@ -85,3 +90,18 @@ class GlueDataHandler:
             table_name=table_name,
             transformation_ctx="write_to_catalog"
         )
+
+    def get_last_partition(self, database: str, table_name: str, partition_key: str):
+        days_back = 7
+        limit_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        expression = f"{partition_key} >= '{limit_date}'"
+
+        response = glue_client.get_partitions(
+            DatabaseName=database,
+            TableName=table_name,
+            Expression=expression
+        )
+
+        partitions = [p['Values'] for p in response.get('Partitions', [])]
+        return max(partitions) if partitions else None
+

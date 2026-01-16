@@ -1,0 +1,152 @@
+# Prompt Aprimorado para sua Necessidade
+
+Aqui está uma versão melhorada, mais clara e estruturada do seu texto:
+
+---
+
+## 📋 Contexto do Problema
+
+Preciso implementar uma classe que aplique uma regra de negócio em **10 tabelas consolidadas diferentes**. Cada tabela consolidada lê dados de **1 a 3 tabelas fonte** (conforme definido em `settings.py`).
+
+### Estrutura de Dados
+- **Tabela de destino (consolidada):** `tbl_processado_operacao_consolidada`
+- **Tabela SoR (Online):** `tbl_processado_operacao_sor`
+- **Tabela SoT (Batch):** `tbl_processado_operacao_apropriada`
+
+> **Nota:** As três tabelas têm schemas idênticos, mas respondem a necessidades diferentes.
+
+### Campos-chave para Aplicação da Regra
+- `dat_vlr_even_oper` (data do valor do evento operacional)
+- `num_prio_even_oper` (número de prioridade do evento operacional)
+- `dat_recm_even_oper` (data de recebimento do evento operacional)
+
+---
+
+## 🔗 Estrutura de Tabelas Auxiliares
+
+**Tabelas SoR (Online):**
+- `tbl_operecao_sor`
+- `tbl_evento_processado_sor`
+- `tbl_posicao_operacao_sor`
+
+**Tabelas SoT (Batch):**
+- `tbl_operecao_apropriada`
+- `tbl_evento_processado_apropriada`
+- `tbl_posicao_operacao_apropriada`
+
+---
+
+## ❓ Problema Principal
+
+**Como aplicar o filtro sempre lendo a ÚLTIMA partição (ano-mês-dia) presente nas tabelas SoR e SoT, sem precisar informar a data manualmente em cada execução?**
+
+### Fluxo Esperado
+1. Identificar automaticamente a última partição disponível (`anomesdia`) em SoR e SoT
+2. Executar a comparação entre dados online e batch baseado nessa partição
+3. Usar o resultado como filtro para gerar a tabela consolidada
+
+### Queries Atuais (com data fixa)
+
+**Query SoR:**
+```sql
+select
+    oper.num_oper,
+    oper.cod_idef_ver_oper,
+    posi.dat_vlr_even_oper,
+    posi.num_prio_even_oper,
+    posi.dat_recm_even_oper
+from db_online.tbl_operecao_sor oper
+inner join db_online.tbl_evento_processado_sor event
+    on oper.num_oper = event.num_oper
+    and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+inner join db_online.tbl_posicao_operacao_sor posi
+    on oper.num_oper = posi.num_oper
+    and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+where anomesdia = '20260115'
+```
+
+**Query SoT:**
+```sql
+select
+    oper.num_oper,
+    oper.cod_idef_ver_oper,
+    posi.dat_vlr_even_oper,
+    posi.num_prio_even_oper,
+    posi.dat_recm_even_oper
+from db_online.tbl_operecao_apropriada oper
+inner join db_online.tbl_evento_processado_apropriada event
+    on oper.num_oper = event.num_oper
+    and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+inner join db_online.tbl_posicao_operacao_apropriada posi
+    on oper.num_oper = posi.num_oper
+    and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+where anomesdia = '20260115'
+```
+
+### Query de Comparação e Ranking (Consolidação)
+
+```sql
+with cte_sor as (
+    select oper.num_oper,
+           oper.cod_idef_ver_oper,
+           posi.dat_vlr_even_oper,
+           posi.num_prio_even_oper,
+           posi.dat_recm_even_oper,
+           'online' as origem
+     from db_online.tbl_operecao_sor oper
+     inner join db_online.tbl_evento_processado_sor event
+        on oper.num_oper = event.num_oper
+        and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+     inner join db_online.tbl_posicao_operacao_sor posi
+        on oper.num_oper = posi.num_oper
+        and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+     where anomesdia = '20260115'
+),
+cte_sot as (
+    select oper.num_oper,
+           oper.cod_idef_ver_oper,
+           posi.dat_vlr_even_oper,
+           posi.num_prio_even_oper,
+           posi.dat_recm_even_oper,
+           'batch' as origem
+    from db_online.tbl_operecao_apropriada oper
+    inner join db_online.tbl_evento_processado_apropriada event
+       on oper.num_oper = event.num_oper
+       and oper.cod_idef_ver_oper = event.cod_idef_ver_oper
+    inner join db_online.tbl_posicao_operacao_apropriada posi
+       on oper.num_oper = posi.num_oper
+       and oper.cod_idef_even_prcs = posi.cod_idef_even_prcs
+    where anomesdia = '20260115'
+),
+union_dados as (
+    select * from cte_sor
+    union
+    select * from cte_sot
+),
+ranking_operacoes as (
+    select
+        origem,
+        num_oper,
+        cod_idef_ver_oper,
+        row_number() over (
+            partition by num_oper, cod_idef_ver_oper
+            order by dat_vlr_even_oper desc,
+                     num_prio_even_oper desc,
+                     dat_recm_even_oper desc
+        ) as rank
+    from union_dados
+)
+select origem, num_oper, cod_idef_ver_oper
+from ranking_operacoes
+where rank = 1
+```
+
+---
+
+## 🎯 Pergunta Final
+
+**Como implementar na classe a detecção automática da última partição (`anomesdia`) disponível em ambas as tabelas (SoR e SoT) para aplicar o filtro dinamicamente, sem hardcodear datas?**
+
+---
+
+Esta versão é muito mais clara e focada! 🚀

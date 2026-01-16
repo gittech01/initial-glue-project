@@ -7,7 +7,7 @@ Orquestra o fluxo completo de processamento de dados incluindo:
 """
 import sys
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
 # AWS Glue imports
 from awsglue.utils import getResolvedOptions
@@ -21,7 +21,7 @@ from utils.handlers.glue_handler import GlueDataHandler
 from utils.handlers.dynamodb_handler import DynamoDBHandler
 from utils.journey_controller import JourneyController
 from utils.business.nova_regra import NovaRegraConsolidacao
-from utils.business.data_processor import DataProcessor
+from app.utils.business.exemplo_implementa_nova_negocio.data_processor import DataProcessor
 
 logger = logging.getLogger(__name__)
 
