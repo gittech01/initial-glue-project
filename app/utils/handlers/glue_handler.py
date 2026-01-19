@@ -3,29 +3,48 @@ Handler para operações de leitura e escrita no AWS Glue.
 
 Mantido em utils/handlers/ para separação de responsabilidades.
 """
-import sys
 import boto3
 from unittest.mock import MagicMock
 from datetime import datetime, timedelta
+
 try:
-    from awsglue.transforms import *
-    from awsglue.utils import getResolvedOptions
     from awsglue.context import GlueContext
-    from awsglue.job import Job
     from awsglue.dynamicframe import DynamicFrame
 except ImportError:
     # Fallback para ambiente local/testes onde as libs do Glue não estão presentes
-    class GlueContext: pass
+    class GlueContext:
+        pass
+    
     class DynamicFrame:
         @staticmethod
-        def fromDF(df, context, name): return MagicMock()
+        def fromDF(df, context, name):
+            return MagicMock()
+    
     print("Aviso: Bibliotecas AWS Glue não encontradas. Usando mocks para compatibilidade local.")
 
-from pyspark.context import SparkContext
 from pyspark.sql import DataFrame
 
 
-glue_client = boto3.client("glue")
+def _get_glue_client(region_name: str = None):
+    """
+    Obtém cliente Glue com região especificada.
+    
+    Args:
+        region_name: Nome da região AWS (opcional)
+    
+    Returns:
+        Cliente boto3 Glue
+    """
+    if region_name:
+        return boto3.client("glue", region_name=region_name)
+    # Tentar obter região do ambiente ou usar padrão
+    try:
+        import os
+        region = os.environ.get('AWS_DEFAULT_REGION', 'sa-east-1')
+        return boto3.client("glue", region_name=region)
+    except Exception:
+        # Fallback: retornar mock em ambiente de teste
+        return MagicMock()
 
 
 class GlueDataHandler:
@@ -91,17 +110,47 @@ class GlueDataHandler:
             transformation_ctx="write_to_catalog"
         )
 
-    def get_last_partition(self, database: str, table_name: str, partition_key: str):
+    def get_last_partition(self, database: str, table_name: str, partition_key: str, region_name: str = None):
+        """
+        Obtém a última partição de uma tabela.
+        
+        Args:
+            database: Nome do banco de dados
+            table_name: Nome da tabela
+            partition_key: Chave de partição
+            region_name: Região AWS (opcional)
+        
+        Returns:
+            Última partição encontrada ou None
+        """
         days_back = 7
         limit_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
         expression = f"{partition_key} >= '{limit_date}'"
 
+        glue_client = _get_glue_client(region_name)
         response = glue_client.get_partitions(
             DatabaseName=database,
             TableName=table_name,
             Expression=expression
         )
 
-        partitions = [p['Values'] for p in response.get('Partitions', [])]
-        return max(partitions) if partitions else None
+        partitions = response.get('Partitions', [])
+        if not partitions:
+            return None
+        
+        # Encontrar a partição mais recente
+        # Cada partição tem {'Values': ['valor1', 'valor2', ...]} onde Values é uma lista
+        # Para partições com uma única coluna, pegamos o primeiro valor
+        # Para comparar, usamos o primeiro valor (assumindo que é a data/anomesdia)
+        last_partition = max(partitions, key=lambda p: p['Values'][0] if p['Values'] else '')
+        
+        # Retornar o primeiro valor da lista Values (partição mais recente)
+        # Se houver múltiplas colunas de partição, retorna a lista completa
+        values = last_partition.get('Values', [])
+        if len(values) == 1:
+            # Partição simples (ex: anomesdia='20240116')
+            return values[0]
+        else:
+            # Múltiplas colunas de partição, retornar lista
+            return values
 

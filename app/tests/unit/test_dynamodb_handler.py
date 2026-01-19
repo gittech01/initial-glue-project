@@ -13,6 +13,7 @@ class TestDynamoDBHandler(unittest.TestCase):
         self.handler = DynamoDBHandler(
             table_name=self.table_name,
             region_name="us-east-1",
+            flag_salva=True,  # Habilitar salvamento para testes
             max_retries=3,
             retry_delay=1,
             dynamodb_client=None  # Usa modo em memória

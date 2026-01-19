@@ -181,9 +181,11 @@ class BusinessRuleOrchestrator:
                 
                 results[processor_name] = result
                 
-                if result['status'] == ExecutionResult.SUCCESS.value:
+                # Comparar status em minúsculas (execute_rule retorna minúsculas)
+                status = result.get('status', '').lower()
+                if status == 'success':
                     successful += 1
-                elif result['status'] == ExecutionResult.SKIPPED.value:
+                elif status == 'skipped':
                     skipped += 1
                 else:
                     failed += 1

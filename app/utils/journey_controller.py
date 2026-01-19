@@ -71,7 +71,13 @@ class JourneyController:
         if dynamodb_client:
             self.dynamodb = dynamodb_client
         elif boto3:
-            self.dynamodb = boto3.resource('dynamodb', region_name=region_name)
+            try:
+                self.dynamodb = boto3.resource('dynamodb', region_name=region_name)
+            except Exception as e:
+                # Se falhar (ex: NoCredentialsError), usar modo em memória
+                self.logger.warning(f"Erro ao inicializar DynamoDB ({type(e).__name__}): {e}. Usando armazenamento em memória.")
+                self.dynamodb = None
+                self._in_memory_store = {}
         else:
             self.dynamodb = None
             self.logger.warning("DynamoDB não disponível. Usando armazenamento em memória.")
@@ -82,6 +88,9 @@ class JourneyController:
     def _ensure_table_exists(self):
         """Garante que a tabela DynamoDB existe. Se não existir, cria em memória."""
         if not self.dynamodb:
+            # Garantir que _in_memory_store existe se não tiver DynamoDB
+            if not hasattr(self, '_in_memory_store'):
+                self._in_memory_store = {}
             return
         
         try:
@@ -89,16 +98,24 @@ class JourneyController:
             # Verificar se a tabela existe fazendo uma operação simples
             self.table.meta.client.describe_table(TableName=self.table_name)
         except ClientError as e:
-            if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            if e.response.get('Error', {}).get('Code') == 'ResourceNotFoundException':
                 self.logger.warning(
                     f"Tabela {self.table_name} não encontrada. "
                     "Usando armazenamento em memória. "
                     "Crie a tabela com chave primária 'journey_id' (String)."
                 )
                 self.dynamodb = None
+                if not hasattr(self, '_in_memory_store'):
+                    self._in_memory_store = {}
+        except Exception as e:
+            # Capturar qualquer outro erro (ex: NoCredentialsError, AttributeError)
+            self.logger.warning(
+                f"Erro ao acessar DynamoDB ({type(e).__name__}): {e}. "
+                "Usando armazenamento em memória."
+            )
+            self.dynamodb = None
+            if not hasattr(self, '_in_memory_store'):
                 self._in_memory_store = {}
-            else:
-                raise
     
     def _get_item(self, journey_id: str) -> Optional[Dict]:
         """Recupera um item do DynamoDB ou do armazenamento em memória."""

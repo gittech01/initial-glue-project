@@ -52,75 +52,102 @@ def test_end_to_end_flow(spark, mock_glue_context):
         
         mock_get_options.return_value = {
             'JOB_NAME': 'test_job',
-            'processor_type': 'data_processor',  # Adicionar processor_type
             'database': 'test_db',
-            'table_name': 'test_table',
-            'output_path': 's3://bucket/output'
+            'tabela_consolidada': 'test_table',
+            'output_path': 's3://bucket/output',
+            'continue_on_error': 'true'
         }
         
         # Mock do DataFrame
         data = [("Alice", 34, 1000), ("Bob", 45, 2000)]
         df = spark.createDataFrame(data, ["name", "age", "value"])
         
-        # Mock do GlueDataHandler
-        with patch('src.main.GlueDataHandler') as mock_handler_class:
-            mock_handler = MagicMock()
-            mock_handler.read_from_catalog.return_value = df
-            mock_handler_class.return_value = mock_handler
-            
-            # Mock do JourneyController e Orchestrator
-            with patch('src.main.JourneyController') as mock_journey_class, \
-                 patch('src.main.BusinessRuleOrchestrator') as mock_orchestrator_class:
-                mock_journey = MagicMock()
-                mock_journey_class.return_value = mock_journey
-                
-                mock_orchestrator = MagicMock()
-                mock_orchestrator.execute_rule.return_value = {
-                    'status': 'success',
-                    'result': {
-                        'status': 'success',
-                        'record_count': 2,
-                        'congregado_id': 'test_db_test_table'
-                    }
+        # Mock do AppConfig para retornar CONSOLIDACOES
+        with patch('src.main.AppConfig') as mock_config_class:
+            mock_config = MagicMock()
+            mock_config.CONSOLIDACOES = {
+                'test_table': {
+                    'principais': {'sor': 'table_sor'},
+                    'auxiliares': {},
+                    'joins_auxiliares': {},
+                    'agrupamento': ['name'],
+                    'tabela_consolidada': 'test_table'
                 }
-                mock_orchestrator_class.return_value = mock_orchestrator
+            }
+            mock_config.journey_table_name = 'test_journey'
+            mock_config.congregado_table_name = 'test_congregado'
+            mock_config.aws_region = 'sa-east-1'
+            mock_config_class.return_value = mock_config
+            
+            # Mock do GlueDataHandler
+            with patch('src.main.GlueDataHandler') as mock_handler_class:
+                mock_handler = MagicMock()
+                mock_handler.read_from_catalog.return_value = df
+                mock_handler.get_last_partition.return_value = None
+                mock_handler_class.return_value = mock_handler
                 
-                # Mock do DynamoDBHandler
-                with patch('src.main.DynamoDBHandler') as mock_dynamodb_class:
-                    mock_dynamodb = MagicMock()
-                    mock_dynamodb.save_congregado.return_value = {
-                        'id': 'test_db_test_table',
-                        'status': 'created'
+                # Mock do JourneyController e Orchestrator
+                with patch('src.main.JourneyController') as mock_journey_class, \
+                     patch('src.main.BusinessRuleOrchestrator') as mock_orchestrator_class, \
+                     patch('src.main.ProcessorFactory') as mock_factory_class:
+                    mock_journey = MagicMock()
+                    mock_journey_class.return_value = mock_journey
+                    
+                    mock_processor = MagicMock()
+                    mock_processor.get_processor_name.return_value = 'flexible_consolidation'
+                    mock_factory_class.create.return_value = mock_processor
+                    
+                    mock_orchestrator = MagicMock()
+                    mock_orchestrator.execute_rule.return_value = {
+                        'status': 'success',
+                        'result': {
+                            'status': 'success',
+                            'record_count': 2
+                        }
                     }
-                    mock_dynamodb_class.return_value = mock_dynamodb
+                    mock_orchestrator_class.return_value = mock_orchestrator
                     
-                    # Executar main
-                    from src.main import main
-                    
-                    result = main()
-                    
-                    # Validações
-                    assert result is not None
-                    assert result['status'] == 'success'
-                    assert result['record_count'] == 2
-                    
-                    # Verificar que todos os componentes foram chamados
-                    mock_spark_context.assert_called_once()
-                    mock_glue_class.assert_called_once()
-                    mock_job_class.assert_called_once()
-                    mock_get_options.assert_called_once()
-                    mock_handler_class.assert_called_once()
-                    mock_journey_class.assert_called_once()
-                    mock_dynamodb_class.assert_called_once()
-                    mock_orchestrator.execute_rule.assert_called_once()
-                    mock_job.commit.assert_called_once()
+                    # Mock do DynamoDBHandler
+                    with patch('src.main.DynamoDBHandler') as mock_dynamodb_class:
+                        mock_dynamodb = MagicMock()
+                        mock_dynamodb.save_congregado.return_value = {
+                            'id': 'test_db_test_table',
+                            'status': 'created'
+                        }
+                        mock_dynamodb_class.return_value = mock_dynamodb
+                        
+                        # Executar main
+                        from src.main import main
+                        
+                        result = main()
+                        
+                        # Validações - main retorna estrutura diferente
+                        assert result is not None
+                        assert result['status'] in ['success', 'partial_success']
+                        assert result['total'] == 1
+                        assert result['sucessos'] == 1
+                        assert 'resultados' in result
+                        
+                        # Verificar que todos os componentes foram chamados
+                        mock_spark_context.assert_called_once()
+                        mock_glue_class.assert_called_once()
+                        mock_job_class.assert_called_once()
+                        mock_get_options.assert_called_once()
+                        mock_handler_class.assert_called_once()
+                        mock_journey_class.assert_called_once()
+                        mock_dynamodb_class.assert_called_once()
+                        mock_factory_class.create.assert_called_once()
+                        mock_orchestrator.execute_rule.assert_called_once()
+                        mock_job.commit.assert_called_once()
 
 
 def test_data_processor_isolation(spark, mock_glue_context):
     """
-    Testa que múltiplas execuções do DataProcessor são isoladas.
+    Testa que múltiplas execuções são isoladas.
+    
+    NOTA: DataProcessor foi removido. Este teste está desativado.
     """
-    from utils.business.data_processor import DataProcessor
+    pytest.skip("DataProcessor foi removido da arquitetura. Teste desativado.")
     from utils.handlers.glue_handler import GlueDataHandler
     from utils.journey_controller import JourneyController
     from utils.dynamodb_handler import DynamoDBHandler

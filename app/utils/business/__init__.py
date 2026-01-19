@@ -1,19 +1,15 @@
 """Módulo de regras de negócio da aplicação."""
 
 from .base_processor import BaseBusinessProcessor
-# from .data_processor import DataProcessor
-# from .sales_analyzer import SalesAnalyzer
 from .processor_factory import ProcessorFactory
 from .orchestrator import BusinessRuleOrchestrator, ExecutionResult
 
-# Importar InventoryProcessor se disponível (exemplo)
+# Importar FlexibleConsolidationProcessor se disponível
 try:
-    from app.utils.business.exemplo_implementa_nova_negocio.inventory_processor import InventoryProcessor
+    from .flexible_consolidation_processor import FlexibleConsolidationProcessor
     __all__ = [
         'BaseBusinessProcessor',
-        # 'DataProcessor',
-        # 'SalesAnalyzer',
-        # 'InventoryProcessor',
+        'FlexibleConsolidationProcessor',
         'ProcessorFactory',
         'BusinessRuleOrchestrator',
         'ExecutionResult'
@@ -21,8 +17,6 @@ try:
 except ImportError:
     __all__ = [
         'BaseBusinessProcessor',
-        # 'DataProcessor',
-        # 'SalesAnalyzer',
         'ProcessorFactory',
         'BusinessRuleOrchestrator',
         'ExecutionResult'

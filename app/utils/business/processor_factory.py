@@ -122,11 +122,12 @@ def _auto_register_processors():
     """Registra automaticamente os processadores disponíveis."""
 
     try:
-        from utils.business.consolidador_posicao_operacao import ConsolidadorPosicaoOperacaoProcessor
-        ProcessorFactory.register("consolidador_posicao_operacao", ConsolidadorPosicaoOperacaoProcessor)
-        ProcessorFactory.register("consolidador", ConsolidadorPosicaoOperacaoProcessor) # Alias curto
+        from utils.business.flexible_consolidation_processor import FlexibleConsolidationProcessor
+        ProcessorFactory.register("flexible_consolidation", FlexibleConsolidationProcessor)
+        ProcessorFactory.register("consolidacao_flexivel", FlexibleConsolidationProcessor) # Alias em português
+        ProcessorFactory.register("flexible", FlexibleConsolidationProcessor) # Alias curto
     except ImportError as e:
-        logger.debug(f"InventoryProcessor não encontrado (opcional): {e}")
+        logger.debug(f"FlexibleConsolidationProcessor não encontrado (opcional): {e}")
 
 
 # Executar auto-registro ao importar o módulo

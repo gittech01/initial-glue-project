@@ -1,7 +1,11 @@
 import pytest
+import os
 from pyspark.sql import SparkSession
 from utils.handlers.glue_handler import GlueDataHandler
 from unittest.mock import MagicMock
+
+# Configurar região AWS para testes
+os.environ['AWS_DEFAULT_REGION'] = 'sa-east-1'
 
 
 @pytest.fixture(scope="module")

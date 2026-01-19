@@ -413,7 +413,7 @@ class NovaRegraNegocio:
 from .data_processor import DataProcessor
 from .nova_regra_negocio import NovaRegraNegocio  # ✅ Adicionar
 
-__all__ = ['DataProcessor', 'NovaRegraNegocio']  # ✅ Adicionar
+__all__ = [..., 'NovaRegraNegocio']  # ✅ Adicionar
 ```
 
 ---

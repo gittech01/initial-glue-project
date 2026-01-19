@@ -1,9 +1,13 @@
 """Testes unitários para utils/business/processor_factory.py"""
 import unittest
+import os
 from unittest.mock import MagicMock
 from utils.business.processor_factory import ProcessorFactory
 from utils.business.base_processor import BaseBusinessProcessor
 from utils.config.settings import AppConfig
+
+# Configurar região AWS para testes
+os.environ['AWS_DEFAULT_REGION'] = 'sa-east-1'
 
 
 class TestProcessor(BaseBusinessProcessor):

@@ -3,18 +3,10 @@ Módulo utils contendo classes para controle de jornada, persistência no Dynamo
 handlers, configurações e regras de negócio.
 """
 
-from .journey_controller import (
-    JourneyController,
-    JourneyStatus,
-    journey_controlled
-)
-
-from .dynamodb_handler import (
-    DynamoDBHandler
-)
-
-from .config import AppConfig
-from .handlers import GlueDataHandler
+from .journey_controller import JourneyController, JourneyStatus, journey_controlled
+from .dynamodb_handler import DynamoDBHandler
+from .config.settings import AppConfig
+from .handlers.glue_handler import GlueDataHandler
 
 __all__ = [
     'JourneyController',

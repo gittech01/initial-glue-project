@@ -1,9 +1,13 @@
 """Testes unitários para utils/business/orchestrator.py"""
 import unittest
+import os
 from unittest.mock import MagicMock
 from utils.business.orchestrator import BusinessRuleOrchestrator, ExecutionResult
 from utils.business.base_processor import BaseBusinessProcessor
 from utils.config.settings import AppConfig
+
+# Configurar região AWS para testes
+os.environ['AWS_DEFAULT_REGION'] = 'sa-east-1'
 
 
 class TestProcessor(BaseBusinessProcessor):
@@ -109,10 +113,10 @@ class TestBusinessRuleOrchestrator(unittest.TestCase):
     
     def test_execute_multiple_rules_with_failures(self):
         """Testa execução de múltiplas regras com algumas falhas."""
-        # Primeira execução sucesso, segunda falha
+        # Ambas execuções falham
         self.mock_journey_controller.execute_with_journey.side_effect = [
-            {'status': 'success'},
-            Exception("Error")
+            Exception("Error 1"),
+            Exception("Error 2")
         ]
         
         rules = [

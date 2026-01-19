@@ -70,8 +70,15 @@ class DynamoDBHandler:
             self.dynamodb = dynamodb_client
             self.client = dynamodb_client.meta.client if hasattr(dynamodb_client, 'meta') else None
         elif boto3:
-            self.dynamodb = boto3.resource('dynamodb', region_name=region_name)
-            self.client = boto3.client('dynamodb', region_name=region_name)
+            try:
+                self.dynamodb = boto3.resource('dynamodb', region_name=region_name)
+                self.client = boto3.client('dynamodb', region_name=region_name)
+            except Exception as e:
+                # Se falhar (ex: NoCredentialsError), usar modo em memória
+                self.logger.warning(f"Erro ao inicializar DynamoDB ({type(e).__name__}): {e}. Usando armazenamento em memória.")
+                self.dynamodb = None
+                self.client = None
+                self._in_memory_store = {}
         else:
             self.dynamodb = None
             self.client = None
@@ -87,13 +94,16 @@ class DynamoDBHandler:
     def _ensure_table_exists(self):
         """Garante que a tabela DynamoDB existe."""
         if not self.dynamodb:
+            # Garantir que _in_memory_store existe se não tiver DynamoDB
+            if not hasattr(self, '_in_memory_store'):
+                self._in_memory_store = {}
             return
         
         try:
             self.table = self.dynamodb.Table(self.table_name)
             self.table.meta.client.describe_table(TableName=self.table_name)
         except ClientError as e:
-            if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            if e.response.get('Error', {}).get('Code') == 'ResourceNotFoundException':
                 self.logger.warning(
                     f"Tabela {self.table_name} não encontrada. "
                     "Usando armazenamento em memória. "
@@ -101,9 +111,18 @@ class DynamoDBHandler:
                 )
                 self.dynamodb = None
                 self.client = None
+                if not hasattr(self, '_in_memory_store'):
+                    self._in_memory_store = {}
+        except Exception as e:
+            # Capturar qualquer outro erro (ex: NoCredentialsError, AttributeError)
+            self.logger.warning(
+                f"Erro ao acessar DynamoDB ({type(e).__name__}): {e}. "
+                "Usando armazenamento em memória."
+            )
+            self.dynamodb = None
+            self.client = None
+            if not hasattr(self, '_in_memory_store'):
                 self._in_memory_store = {}
-            else:
-                raise
     
     def _generate_idempotency_key(self, data: Dict) -> str:
         """

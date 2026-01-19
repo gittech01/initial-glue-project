@@ -1,9 +1,13 @@
 """Testes unitários para utils/business/base_processor.py"""
 import unittest
 from unittest.mock import MagicMock, patch
+import os
 from pyspark.sql import SparkSession
 from utils.business.base_processor import BaseBusinessProcessor
 from utils.config.settings import AppConfig
+
+# Configurar região AWS para testes
+os.environ['AWS_DEFAULT_REGION'] = 'sa-east-1'
 
 
 class ConcreteProcessor(BaseBusinessProcessor):

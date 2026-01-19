@@ -34,25 +34,25 @@ class TestGlueDataHandler(unittest.TestCase):
         self.mock_glue_context.create_dynamic_frame.from_catalog.assert_called_once_with(
             database="db",
             table_name="table",
-            additional_options={}
+            push_down_predicate=""
         )
         mock_dynamic_frame.toDF.assert_called_once()
         self.assertEqual(result, mock_df)
     
     def test_read_from_catalog_with_options(self):
-        """Testa leitura do catálogo com opções adicionais."""
+        """Testa leitura do catálogo com filtro."""
         mock_dynamic_frame = MagicMock()
         mock_df = MagicMock()
         mock_dynamic_frame.toDF.return_value = mock_df
         self.mock_glue_context.create_dynamic_frame.from_catalog.return_value = mock_dynamic_frame
         
-        options = {"pushdownPredicate": "date > '2024-01-01'"}
-        result = self.handler.read_from_catalog("db", "table", options)
+        filter_predicate = "date > '2024-01-01'"
+        result = self.handler.read_from_catalog("db", "table", filter=filter_predicate)
         
         self.mock_glue_context.create_dynamic_frame.from_catalog.assert_called_once_with(
             database="db",
             table_name="table",
-            additional_options=options
+            push_down_predicate=filter_predicate
         )
         self.assertEqual(result, mock_df)
     
@@ -138,6 +138,37 @@ class TestGlueDataHandler(unittest.TestCase):
         args, kwargs = self.mock_glue_context.write_dynamic_frame.from_catalog.call_args
         self.assertEqual(kwargs['database'], 'db')
         self.assertEqual(kwargs['table_name'], 'table')
+    
+    @patch('utils.handlers.glue_handler._get_glue_client')
+    def test_get_last_partition(self, mock_get_client):
+        """Testa obtenção da última partição."""
+        mock_client = MagicMock()
+        mock_client.get_partitions.return_value = {
+            'Partitions': [
+                {'Values': ['2024-01-15']},
+                {'Values': ['2024-01-16']},
+                {'Values': ['2024-01-14']}
+            ]
+        }
+        mock_get_client.return_value = mock_client
+        
+        result = self.handler.get_last_partition('db', 'table', 'date')
+        
+        # Retorna string para partição simples (uma coluna)
+        self.assertEqual(result, '2024-01-16')
+        mock_client.get_partitions.assert_called_once()
+    
+    @patch('utils.handlers.glue_handler._get_glue_client')
+    def test_get_last_partition_no_partitions(self, mock_get_client):
+        """Testa obtenção quando não há partições."""
+        mock_client = MagicMock()
+        mock_client.get_partitions.return_value = {'Partitions': []}
+        mock_get_client.return_value = mock_client
+        
+        result = self.handler.get_last_partition('db', 'table', 'date')
+        
+        self.assertIsNone(result)
+
 
 if __name__ == '__main__':
     unittest.main()

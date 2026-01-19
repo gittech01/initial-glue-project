@@ -1,18 +1,18 @@
 """
-Entry Point da aplicação AWS Glue - Agnóstico para múltiplas regras de negócio.
+Entry Point da aplicação AWS Glue - Consolidação Flexível.
 
-Este módulo é o ponto de entrada principal da aplicação, responsável por
-inicializar o contexto do Glue e orquestrar a execução dos processos de negócio.
+Este módulo executa consolidações de dados de forma flexível, permitindo:
+- Executar uma consolidação específica ou múltiplas consolidações
+- Não interromper outras consolidações caso uma falhe
+- Configurações dinâmicas via settings.py
 
 Design Patterns aplicados:
 - Factory: Cria processadores através de ProcessorFactory
-- Strategy: Diferentes regras de negócio são estratégias diferentes
 - Orchestrator: BusinessRuleOrchestrator coordena execuções
 - Dependency Injection: Todas as dependências são injetadas
 """
 import sys
 import logging
-from typing import Optional, Dict, Any
 
 try:
     from awsglue.utils import getResolvedOptions
@@ -21,11 +21,18 @@ try:
     from pyspark.context import SparkContext
 except ImportError:
     # Fallback para ambiente local/testes
-    def getResolvedOptions(args, options): 
+    def getResolvedOptions(args, options):
         return {opt: f"mock_{opt}" for opt in options}
-    class GlueContext: pass
-    class Job: pass
-    class SparkContext: pass
+    
+    class GlueContext:
+        pass
+    
+    class Job:
+        pass
+    
+    class SparkContext:
+        pass
+    
     logging.warning("Bibliotecas AWS Glue não encontradas. Modo de desenvolvimento ativado.")
 
 from utils.config.settings import AppConfig
@@ -35,9 +42,11 @@ from utils.dynamodb_handler import DynamoDBHandler
 from utils.business.processor_factory import ProcessorFactory
 from utils.business.orchestrator import BusinessRuleOrchestrator
 
-
 # Configurar logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
@@ -56,11 +65,8 @@ def initialize_glue_context() -> tuple:
         # Obter argumentos do job
         args = getResolvedOptions(sys.argv, [
             'JOB_NAME',
-            'processor_type',  # Tipo de processador (ex: 'data_processor', 'sales_analyzer')
             'database',
-            'table_name',
-            'output_path',
-            'periodo',  # Opcional, para sales_analyzer
+            'tabela_consolidada',  # Opcional - se não fornecido, executa todas
             'continue_on_error'  # Opcional, padrão True
         ])
         
@@ -76,18 +82,26 @@ def initialize_glue_context() -> tuple:
 
 def main():
     """
-    Função principal que orquestra a execução do job.
+    Função principal que executa consolidações de forma flexível.
     
-    Agora é agnóstico para múltiplas regras de negócio através do ProcessorFactory.
+    Comportamento:
+    - Se 'tabela_consolidada' for fornecido: executa apenas essa consolidação
+    - Se 'tabela_consolidada' não for fornecido: executa todas as consolidações do CONSOLIDACOES
+    - Não interrompe outras consolidações caso uma falhe (continue_on_error=True)
     """
     try:
-        # ---------------------------------------------------------------------
         # Inicializar contexto Glue
         sc, glue_context, job, args = initialize_glue_context()
         
         # Carregar configurações
         config = AppConfig()
         logger.info("Configurações carregadas")
+        
+        # Verificar se há consolidações configuradas
+        consolidacoes_config = getattr(config, 'CONSOLIDACOES', {})
+        if not consolidacoes_config:
+            logger.warning("Nenhuma consolidação encontrada em CONSOLIDACOES")
+            return {'status': 'warning', 'message': 'Nenhuma consolidação configurada'}
         
         # Inicializar handlers
         glue_handler = GlueDataHandler(glue_context)
@@ -106,89 +120,118 @@ def main():
             journey_controller=journey_controller,
             continue_on_error=continue_on_error
         )
-        # ----------------------------------------------------------------------
         
-        # Obter tipo de processador (padrão: data_processor)
-        processor_type = args.get('processor_type', 'data_processor')
-        logger.info(f"Tipo de processador: {processor_type}")
-        
-        # Criar processador usando Factory Pattern
-        try:
-            processor = ProcessorFactory.create(
-                processor_type=processor_type,
-                glue_handler=glue_handler,
-                journey_controller=journey_controller,
-                dynamodb_handler=dynamodb_handler,
-                config=config
-            )
-            logger.info(f"Processador criado: {processor.get_processor_name()}")
-        except ValueError as e:
-            logger.error(f"Erro ao criar processador: {e}")
-            logger.info(f"Processadores disponíveis: {ProcessorFactory.list_available()}")
-            raise
-        
-        # Preparar parâmetros para o processador
-        processor_kwargs = {
-            'database': args.get('database'),
-            'table_name': args.get('table_name'),
-            'output_path': args.get('output_path')
-        }
-        
-        # Adicionar parâmetros específicos do sales_analyzer
-        if processor_type == 'sales_analyzer':
-            periodo = args.get('periodo')
-            if not periodo:
-                raise ValueError("Parâmetro 'periodo' é obrigatório para sales_analyzer")
-            processor_kwargs['periodo'] = periodo
-        
-        # Gerar chave de idempotência
-        idempotency_key = (
-            f"{processor_type}_{args.get('JOB_NAME', 'default')}_"
-            f"{args.get('table_name', 'unknown')}"
+        # Criar processador de consolidação
+        processor = ProcessorFactory.create(
+            processor_type='flexible_consolidation',
+            glue_handler=glue_handler,
+            journey_controller=journey_controller,
+            dynamodb_handler=dynamodb_handler,
+            config=config
         )
-        if processor_type == 'sales_analyzer' and args.get('periodo'):
-            idempotency_key += f"_{args.get('periodo')}"
+        logger.info(f"Processador criado: {processor.get_processor_name()}")
         
-        # Executar regra de negócio via orquestrador (não interrompe em caso de falha)
-        result = orchestrator.execute_rule(
-            processor=processor,
-            idempotency_key=idempotency_key,
-            metadata={
-                'job_name': args.get('JOB_NAME', 'unknown'),
-                'processor_type': processor_type,
-                'database': args.get('database', 'unknown'),
-                'table_name': args.get('table_name', 'unknown')
-            },
-            **processor_kwargs
-        )
+        # Determinar quais consolidações executar
+        tabela_consolidada = args.get('tabela_consolidada')
+        database = args.get('database')
         
-        # Verificar resultado
-        if result.get('status') == 'failed':
-            error_msg = result.get('error', 'Erro desconhecido')
-            logger.error(f"Processamento falhou: {error_msg}")
-            # Se continue_on_error=False, re-raise
-            if not continue_on_error:
-                raise Exception(f"Processamento falhou: {error_msg}")
-            # Se continue_on_error=True, apenas loga e continua
-            logger.warning("Processamento falhou mas continue_on_error=True, continuando...")
+        if not database:
+            raise ValueError("Parâmetro 'database' é obrigatório")
+        
+        # Se tabela_consolidada foi especificada, executar apenas essa
+        if tabela_consolidada:
+            if tabela_consolidada not in consolidacoes_config:
+                raise ValueError(
+                    f"Tabela consolidada '{tabela_consolidada}' não encontrada em CONSOLIDACOES. "
+                    f"Disponíveis: {list(consolidacoes_config.keys())}"
+                )
+            tabelas_a_processar = [tabela_consolidada]
+            logger.info(f"Executando consolidação específica: {tabela_consolidada}")
         else:
-            logger.info(f"Processamento concluído com sucesso: {result}")
+            # Executar todas as consolidações configuradas
+            tabelas_a_processar = list(consolidacoes_config.keys())
+            logger.info(f"Executando {len(tabelas_a_processar)} consolidações: {tabelas_a_processar}")
         
-        # Retornar resultado do processador (não do orchestrator)
-        if result.get('status') == 'success' and 'result' in result:
-            return result['result']
-        return result
+        # Executar cada consolidação
+        resultados = {}
+        sucessos = 0
+        falhas = 0
+        
+        for tabela_consolidada in tabelas_a_processar:
+            try:
+                logger.info(f"Processando consolidação: {tabela_consolidada}")
+                
+                # Gerar chave de idempotência única para cada consolidação
+                idempotency_key = (
+                    f"consolidacao_{args.get('JOB_NAME', 'default')}_"
+                    f"{tabela_consolidada}_{database}"
+                )
+                
+                # Executar via orquestrador (não interrompe se uma falhar)
+                result = orchestrator.execute_rule(
+                    processor=processor,
+                    idempotency_key=idempotency_key,
+                    metadata={
+                        'job_name': args.get('JOB_NAME', 'unknown'),
+                        'processor_type': 'flexible_consolidation',
+                        'database': database,
+                        'tabela_consolidada': tabela_consolidada
+                    },
+                    database=database,
+                    tabela_consolidada=tabela_consolidada
+                )
+                
+                resultados[tabela_consolidada] = result
+                
+                # Contar sucessos e falhas
+                if result.get('status') == 'success':
+                    sucessos += 1
+                    logger.info(f"✓ Consolidação '{tabela_consolidada}' concluída com sucesso")
+                else:
+                    falhas += 1
+                    error_msg = result.get('error', 'Erro desconhecido')
+                    logger.error(f"✗ Consolidação '{tabela_consolidada}' falhou: {error_msg}")
+                    
+                    # Se continue_on_error=False, interromper execução
+                    if not continue_on_error:
+                        raise Exception(f"Consolidação '{tabela_consolidada}' falhou: {error_msg}")
+                    
+            except Exception as e:
+                falhas += 1
+                error_msg = str(e)
+                logger.error(f"✗ Erro ao processar '{tabela_consolidada}': {error_msg}")
+                resultados[tabela_consolidada] = {
+                    'status': 'failed',
+                    'error': error_msg
+                }
+                
+                # Se continue_on_error=False, interromper execução
+                if not continue_on_error:
+                    raise
+        
+        # Resumo final
+        logger.info("=" * 60)
+        logger.info(f"Resumo da execução:")
+        logger.info(f"  Total de consolidações: {len(tabelas_a_processar)}")
+        logger.info(f"  Sucessos: {sucessos}")
+        logger.info(f"  Falhas: {falhas}")
+        logger.info("=" * 60)
         
         # Finalizar job
         job.commit()
         logger.info("Job finalizado com sucesso")
         
-        return result
+        # Retornar resumo
+        return {
+            'status': 'success' if falhas == 0 else 'partial_success',
+            'total': len(tabelas_a_processar),
+            'sucessos': sucessos,
+            'falhas': falhas,
+            'resultados': resultados
+        }
         
     except Exception as e:
         logger.error(f"Erro na execução do job: {e}", exc_info=True)
-        # Não re-raise aqui - deixa o sistema lidar com a falha
-        # Em produção, você pode querer notificar ou fazer cleanup
         raise
 
 

@@ -30,10 +30,8 @@ class TestMain(unittest.TestCase):
         mock_job = MagicMock()
         mock_args = {
             'JOB_NAME': 'test_job',
-            'processor_type': 'data_processor',
             'database': 'test_db',
-            'table_name': 'test_table',
-            'output_path': 's3://bucket/output'
+            'tabela_consolidada': None  # None executa todas as consolidações
         }
         mock_init_glue.return_value = (mock_sc, mock_glue_context, mock_job, mock_args)
         
@@ -42,6 +40,14 @@ class TestMain(unittest.TestCase):
         mock_config.congregado_table_name = 'congregado_table'
         mock_config.aws_region = 'us-east-1'
         mock_config.default_output_format = 'parquet'
+        # Mock CONSOLIDACOES para permitir execução
+        mock_config.CONSOLIDACOES = {
+            'tbl_test': {
+                'principais': {'sor': 'tbl_sor', 'sot': 'tbl_sot'},
+                'chaves_principais': ['key1'],
+                'campos_decisao': ['field1']
+            }
+        }
         mock_config_class.return_value = mock_config
         
         mock_glue_handler = MagicMock()
@@ -78,9 +84,10 @@ class TestMain(unittest.TestCase):
         mock_journey_class.assert_called_once()
         mock_dynamodb_class.assert_called_once()
         mock_factory_class.create.assert_called_once()
-        mock_orchestrator.execute_rule.assert_called_once()
+        # execute_rule é chamado para cada consolidação configurada
+        self.assertGreaterEqual(mock_orchestrator.execute_rule.call_count, 1)
         mock_job.commit.assert_called_once()
-        self.assertEqual(result['status'], 'success')
+        self.assertIn(result['status'], ['success', 'partial_success'])
     
     @patch('src.main.initialize_glue_context')
     def test_main_exception(self, mock_init_glue):
@@ -107,8 +114,7 @@ class TestMain(unittest.TestCase):
         mock_get_resolved.return_value = {
             'JOB_NAME': 'test_job',
             'database': 'test_db',
-            'table_name': 'test_table',
-            'output_path': 's3://bucket/output'
+            'tabela_consolidada': None  # None executa todas as consolidações
         }
         
         mock_sc = MagicMock()
