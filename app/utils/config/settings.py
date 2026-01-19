@@ -4,8 +4,8 @@ Configurações da aplicação.
 Centraliza todas as configurações da aplicação, permitindo fácil
 customização e manutenção.
 """
-import os
-from typing import Optional, Dict, Any
+
+from typing import Dict, Any
 
 
 class AppConfig:
@@ -16,12 +16,9 @@ class AppConfig:
     Suporta carregamento de configurações de consolidação do settings.py.
     """
     
-    def __init__(self, settings_path: Optional[str] = None):
+    def __init__(self):
         """
-        Inicializa configurações a partir de variáveis de ambiente.
-        
-        Args:
-            settings_path: Caminho opcional para arquivo settings.py com CONSOLIDACOES
+        Inicializa configurações a partir de variáveis de necessárias para o funcionamento da aplicação.
         """
         
         # AWS Configuration
@@ -32,7 +29,7 @@ class AppConfig:
         self.congregado_table_name: str = 'congregado_data'
         
         # Glue Configuration
-        self.default_database: str = 'default_database'
+        self.default_database_output: str = 'default_database'
         self.default_output_format: str = 'parquet'
         
         # Retry Configuration
@@ -49,14 +46,20 @@ class AppConfig:
         # Definition tables cores:
         # Tables of consolidation
         self.tbu2_ = ...
-        
+
         # Consolidações Configuration (carregado do settings.py se disponível)
         self.consolidacoes_tabelas: Dict[str, Any] = {
             
             "tbl_processado_operacao_consolidada_n1": {
                 "principais": {
-                    "sor": "tbl_processado_operacao_sor_n1",
-                    "sot": "tbl_processado_operacao_apropriada_n1"
+                    "sor": {
+                        "database": "db_sor",
+                        "table": "tbl_processado_operacao_sor_n1"
+                    },
+                    "sot": {
+                        "database": "db_sot",
+                        "table": "tbl_processado_operacao_apropriada_n1"
+                    }
                 },
                 "auxiliares": {
                     "sor": {
@@ -113,12 +116,17 @@ class AppConfig:
             },
             "tbl_processado_operacao_consolidada_n2": {
                 "principais": {
-                    "sor": "tbl_processado_operacao_sor_n2",
-                    "sot": "tbl_processado_operacao_apropriada_n2"
+                    "sor": {
+                        "database": "db_sor",
+                        "table": "tbl_processado_operacao_sor_n2"
+                    },
+                    "sot": {
+                        "database": "db_sot",
+                        "table": "tbl_processado_operacao_apropriada_n2"
+                    }
                 },
                 "auxiliares": {
                     "sor": {
-                        "oper": "tbl_operecao_sor_n2",
                         "event": "tbl_evento_processado_sor_n2",
                         "posi": "tbl_posicao_operacao_sor_n2"
                     },
@@ -131,15 +139,7 @@ class AppConfig:
                 "joins_auxiliares": {
                     "sor": [
                         {
-                            "left": "oper",
-                            "right": "event",
-                            "on": [
-                                ("num_oper", "num_oper"),
-                                ("cod_idef_ver_oper", "cod_idef_ver_oper")
-                            ]
-                        },
-                        {
-                            "left": "oper",
+                            "left": "event",
                             "right": "posi",
                             "on": [
                                 ("num_oper", "num_oper"),
@@ -166,32 +166,31 @@ class AppConfig:
                         }
                     ]
                 },
-                "chaves_principais": ["num_oper", "cod_idef_ver_oper"], 
+                "chaves_principais": ["num_oper", "cod_idef_even_prcs"], 
                 "campos_decisao": ["dat_vlr_even_oper", "num_prio_even_oper", "dat_recm_even_oper"]
             },
             "tbl_processado_operacao_consolidada_n3": {
                 "principais": {
-                    "sor": "tbl_processado_operacao_sor_n3",
-                    "sot": "tbl_processado_operacao_apropriada_n3"
+                    "sor": {
+                        "database": "db_sor",
+                        "table": "tbl_processado_operacao_sor_n3"
+                    },
+                    "sot": {
+                        "database": "db_sot",
+                        "table": "tbl_processado_operacao_apropriada_n3"
+                    }
                 },
                 "auxiliares": {},
                 "joins_auxiliares": {},
                 "chaves_principais": [],
-                "campos_decisao": []
+                "campos_decisao": ["dat_vlr_even_oper", "num_prio_even_oper", "dat_recm_even_oper"]
             },
+
+            # Aqui há uma substituição direta da
             "tbl_processado_operacao_consolidada_n4": {
                 "principais": {
-                    "sor": "tbl_processado_operacao_sor_n4",
-                    "sot": "tbl_processado_operacao_apropriada_n4"
-                },
-                "auxiliares": {},
-                "joins_auxiliares": {},
-                "chaves_principais": [],
-                "campos_decisao": []
-            },
-            "tbl_processado_operacao_consolidada_n5": {
-                "principais": {
-                    "sor": "tbl_processado_operacao_sor_n5"
+
+                    "sor": { "database": "db_sor", "table": "tbl_processado_operacao_sor_n4" }
                 },
                 "auxiliares": {},
                 "joins_auxiliares": {},
@@ -199,5 +198,15 @@ class AppConfig:
                 "campos_decisao": []
             }
         }
+    
+    def __repr__(self) -> str:
+        """Representação string da configuração."""
+        return (
+            f"AppConfig("
+            f"region={self.aws_region}, "
+            f"journey_table={self.journey_table_name}, "
+            f"congregado_table={self.congregado_table_name}"
+            f")"
+        )
             
 

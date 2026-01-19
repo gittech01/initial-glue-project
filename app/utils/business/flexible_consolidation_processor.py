@@ -12,7 +12,7 @@ Suporta:
 - Casos com uma ou múltiplas origens
 """
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, List
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
@@ -112,20 +112,49 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         self._dataframes_originais = {}  # Armazenar originais para join posterior
         
         for origem in principais.keys():  # 'sor', 'sot', etc.
-            tabela_principal = principais[origem]
+            origem_cfg = principais[origem]
             
-            logger.info(f"[{tabela_consolidada}] Lendo origem '{origem}': {tabela_principal}")
+            # Suportar nova estrutura (dict com database/table) e estrutura antiga (string)
+            if isinstance(origem_cfg, dict):
+                database_origem = origem_cfg.get('database', database)
+                tabela_principal = origem_cfg.get('table')
+            else:
+                # Estrutura antiga: apenas nome da tabela
+                database_origem = database
+                tabela_principal = origem_cfg
             
-            # Ler tabela principal com última partição
+            if not tabela_principal:
+                raise ValueError(f"Configuração de origem '{origem}' deve conter 'table' ou ser uma string")
+            
+            logger.info(f"[{tabela_consolidada}] Lendo origem '{origem}': {database_origem}.{tabela_principal}")
+            
+            # Preparar lista de colunas necessárias (chaves_principais + campos_decisao)
+            # Isso evita colunas duplicadas no union posterior, como no SQL original
+            chaves_principais = regra_cfg.get('chaves_principais', [])
+            campos_decisao = regra_cfg.get('campos_decisao', [])
+            colunas_necessarias = list(set(chaves_principais + campos_decisao))  # Remove duplicatas
+            
+            # Ler dados com auxiliares (se houver) ou tabela principal (se não houver auxiliares)
+            # IMPORTANTE: No SQL original, se há auxiliares, os joins iniciam APENAS com auxiliares
+            # A tabela principal só é usada para obter a última partição e no join final
             df = self._read_origem_com_auxiliares(
-                database=database,
+                database=database_origem,
                 tabela_principal=tabela_principal,
                 auxiliares=auxiliares.get(origem, {}),
-                joins_auxiliares=joins_auxiliares.get(origem, [])
+                joins_auxiliares=joins_auxiliares.get(origem, []),
+                colunas_necessarias=colunas_necessarias if colunas_necessarias else None
             )
             
-            # Armazenar DataFrame original
-            self._dataframes_originais[origem] = df
+            # Armazenar referência da tabela principal para uso no join final
+            # (não armazenamos o DataFrame completo aqui para economizar memória)
+            if not hasattr(self, '_dataframes_originais'):
+                self._dataframes_originais = {}
+            # Armazenar apenas metadados da tabela principal, não o DataFrame completo
+            # O DataFrame completo será lido no join final
+            self._dataframes_originais[origem] = {
+                'database': database_origem,
+                'table': tabela_principal
+            }
             
             # Marcar origem
             origem_label = 'online' if origem == 'sor' else 'batch'
@@ -136,33 +165,10 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         if len(dfs_marcados) == 1:
             return dfs_marcados[0]
         
-        # Garantir que todos os DataFrames tenham colunas únicas antes do union
-        # Verificar se há colunas duplicadas por nome e resolver se necessário
-        dfs_unicos = []
-        for df in dfs_marcados:
-            colunas_lista = df.columns
-            colunas_unicas = list(dict.fromkeys(colunas_lista))  # Mantém ordem e remove duplicatas
-            
-            # Se não há duplicatas por nome, usar DataFrame diretamente
-            if len(colunas_unicas) == len(colunas_lista):
-                dfs_unicos.append(df)
-            else:
-                # Há duplicatas por nome - Spark pode detectar ambiguidade no join
-                # A melhor abordagem é não fazer select se já temos todas as colunas necessárias
-                # Se precisar remover duplicatas, fazer drop de colunas duplicadas manualmente
-                # Mas como não afeta a lógica de negócio, vamos apenas pular este DataFrame problemático
-                # na limpeza e deixar o unionByName lidar (ele usa allowMissingColumns=True)
-                # Para resolver ambiguidade, usar select apenas se realmente necessário
-                try:
-                    df_unico = df.select(*colunas_unicas)
-                    dfs_unicos.append(df_unico)
-                except Exception:
-                    # Se falhar por ambiguidade, usar DataFrame original
-                    # O unionByName com allowMissingColumns=True pode lidar
-                    dfs_unicos.append(df)
-        
-        df_unificado = dfs_unicos[0]
-        for df in dfs_unicos[1:]:
+        # Unificar DataFrames - o Spark remove automaticamente colunas duplicadas de chaves de join
+        # Se houver colunas duplicadas por nome (não de join), será detectado no unionByName
+        df_unificado = dfs_marcados[0]
+        for df in dfs_marcados[1:]:
             df_unificado = df_unificado.unionByName(df, allowMissingColumns=True)
         
         return df_unificado
@@ -172,7 +178,8 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         database: str,
         tabela_principal: str,
         auxiliares: Dict[str, str],
-        joins_auxiliares: List[Dict]
+        joins_auxiliares: List[Dict],
+        colunas_necessarias: List[str] = None
     ) -> DataFrame:
         """
         Lê tabela principal e aplica joins com auxiliares dinamicamente.
@@ -182,9 +189,11 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             tabela_principal: Nome da tabela principal
             auxiliares: Dict alias -> nome_tabela (ex: {'oper': 'tbl_operacao_sor'})
             joins_auxiliares: Lista de especificações de joins
+            colunas_necessarias: Lista opcional de colunas a selecionar após joins
+                                (se None, retorna todas as colunas)
         
         Returns:
-            DataFrame com joins aplicados
+            DataFrame com joins aplicados (e colunas selecionadas se especificado)
         """
         # Obter última partição da tabela principal
         try:
@@ -215,10 +224,6 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         if not auxiliares or not joins_auxiliares:
             return df_principal
         
-        # Se não há auxiliares ou joins, retornar direto
-        if not auxiliares or not joins_auxiliares:
-            return df_principal
-        
         # Ler auxiliares
         dfs_aux = {}
         for alias, tabela_aux in auxiliares.items():
@@ -229,8 +234,10 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             )
         
         # Aplicar joins na ordem especificada
-        # O resultado acumulado sempre começa pela tabela principal
-        df_resultado = df_principal
+        # IMPORTANTE: No SQL original, os joins iniciam APENAS com auxiliares, não com a tabela principal
+        # A tabela principal só é usada para obter a última partição e no join final
+        # O primeiro join deve começar com o primeiro auxiliar especificado em 'left'
+        df_resultado = None
         
         for join_spec in joins_auxiliares:
             left_alias = join_spec.get('left')
@@ -247,11 +254,32 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                 continue
             
             # Preparar DataFrame da esquerda
-            # Se left é 'principal' ou não está em dfs_aux, usar df_resultado
-            if left_alias == 'principal' or left_alias not in dfs_aux:
+            # IMPORTANTE: No SQL original, os joins iniciam APENAS com auxiliares
+            # Mas suportamos também o caso especial onde 'principal' é usado (para compatibilidade)
+            if df_resultado is None:
+                # Primeiro join
+                if left_alias == 'principal':
+                    # Caso especial: começar com tabela principal (não é o padrão do SQL original)
+                    df_left = df_principal
+                    logger.info("Iniciando joins com tabela principal (caso especial)")
+                elif left_alias in dfs_aux:
+                    # Caso normal: começar com auxiliar (conforme SQL original)
+                    df_left = dfs_aux[left_alias]
+                    logger.info(f"Iniciando joins com auxiliar '{left_alias}' (conforme SQL original)")
+                else:
+                    raise ValueError(
+                        f"Primeiro join deve começar com um auxiliar ou 'principal', mas '{left_alias}' não está disponível. "
+                        f"Auxiliares disponíveis: {list(dfs_aux.keys())}"
+                    )
+            elif left_alias == 'principal':
+                # Se especificado 'principal' em join subsequente, usar df_resultado acumulado
                 df_left = df_resultado
-            else:
+            elif left_alias in dfs_aux:
+                # Se left_alias está em auxiliares, usar esse auxiliar
                 df_left = dfs_aux[left_alias]
+            else:
+                # Caso contrário, usar resultado acumulado
+                df_left = df_resultado
             
             df_right = dfs_aux[right_alias]
             
@@ -276,6 +304,21 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                 
                 join_columns.append(left_col)
             
+            # Antes do join, remover do df_right colunas que já existem em df_left
+            # (exceto as chaves de join, que serão removidas automaticamente pelo Spark)
+            colunas_left = set(df_left.columns)
+            colunas_right = set(df_right.columns)
+            colunas_join = set(join_columns)
+            
+            # Colunas a manter do df_right: apenas as que não estão em df_left (exceto chaves de join)
+            colunas_para_manter_right = [col for col in df_right.columns 
+                                        if col not in colunas_left or col in colunas_join]
+            
+            # Se há colunas duplicadas (não de join), selecionar apenas as necessárias
+            if len(colunas_para_manter_right) < len(df_right.columns):
+                df_right = df_right.select(*colunas_para_manter_right)
+                logger.debug(f"Removendo {len(df_right.columns) - len(colunas_para_manter_right)} colunas duplicadas do DataFrame da direita antes do join")
+            
             logger.info(
                 f"Aplicando join {how}: {left_alias} -> {right_alias} "
                 f"on {join_columns}"
@@ -285,15 +328,16 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             # Spark remove colunas duplicadas das chaves de join automaticamente
             df_resultado = df_left.join(df_right, on=join_columns, how=how)
         
-        # Após todos os joins, garantir que não há colunas duplicadas por nome
-        # Se houver, o Spark pode ter ambiguidade - remover apenas duplicatas de nomes
-        # (não duplicatas de referência, que são diferentes objetos)
-        colunas_lista = df_resultado.columns
-        colunas_unicas_por_nome = list(dict.fromkeys(colunas_lista))
-        
-        # Se há menos colunas únicas por nome do que total, pode haver duplicatas
-        # Mas não tentar select se já temos o número correto (pode causar ambiguidade)
-        # O Spark remove automaticamente colunas duplicadas de chaves de join
+        # Após todos os joins, selecionar apenas colunas necessárias (como no SQL)
+        # Isso evita colunas duplicadas e ambiguidade no unionByName posterior
+        if colunas_necessarias:
+            # Verificar quais colunas realmente existem no DataFrame
+            colunas_existentes = [col for col in colunas_necessarias if col in df_resultado.columns]
+            if colunas_existentes:
+                df_resultado = df_resultado.select(*colunas_existentes)
+                logger.info(f"Selecionadas {len(colunas_existentes)} colunas após joins: {colunas_existentes}")
+            else:
+                logger.warning(f"Nenhuma das colunas necessárias encontrada: {colunas_necessarias}")
         
         return df_resultado
     
@@ -357,15 +401,10 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         )
         
         # Construir window specification
+        # IMPORTANTE: No SQL original, o ORDER BY do ranking NÃO inclui preferência por origem
+        # A preferência por origem só aparece no join final (linha 121: and rank_oper.origem = 'online')
         partition_cols = [F.col(c) for c in chaves_principais]
         order_cols = [F.col(c).desc_nulls_last() for c in campos_decisao]
-        
-        # Adicionar preferência por origem 'online' como último critério de desempate
-        # (apenas se houver múltiplas origens)
-        origens_unicas = df_unificado.select('origem').distinct().count()
-        if origens_unicas > 1:
-            ordem_origem = F.when(F.col('origem') == F.lit('online'), 1).otherwise(0)
-            order_cols.append(ordem_origem.desc())
         
         window_spec = Window.partitionBy(*partition_cols).orderBy(*order_cols)
         
@@ -405,7 +444,7 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
     def _join_com_registros_completos(
         self,
         df_ranked: DataFrame,
-        data_originais: Dict[str, DataFrame],
+        data_originais: Dict[str, Dict],
         regra_cfg: Dict,
         database: str,
         chaves_principais: List[str]
@@ -415,6 +454,9 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         
         Isso garante que o resultado final contenha todas as colunas originais,
         não apenas as colunas usadas no ranking.
+        
+        IMPORTANTE: No SQL original (linhas 113-133), o join final é feito com a tabela principal
+        completa, usando apenas as chaves principais e filtrando por origem e rank=1.
         """
         principais = regra_cfg.get('principais', {})
         dfs_completos = []
@@ -423,16 +465,33 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             if origem not in data_originais:
                 continue
             
-            # Filtrar vencedores por origem
-            vencedores_origem = df_ranked.filter(F.col('origem') == F.lit(
-                'online' if origem == 'sor' else 'batch'
-            ))
+            # Filtrar vencedores por origem (equivalente a: and rank_oper.origem = 'online'/'batch')
+            origem_label = 'online' if origem == 'sor' else 'batch'
+            vencedores_origem = df_ranked.filter(F.col('origem') == F.lit(origem_label))
+            
+            # Obter metadados da tabela principal armazenados
+            metadata = data_originais[origem]
+            if isinstance(metadata, dict) and 'database' in metadata and 'table' in metadata:
+                # Nova estrutura: metadados armazenados
+                database_origem = metadata['database']
+                tabela_principal = metadata['table']
+            else:
+                # Fallback: obter da configuração
+                origem_cfg = principais[origem]
+                if isinstance(origem_cfg, dict):
+                    database_origem = origem_cfg.get('database', database)
+                    tabela_principal = origem_cfg.get('table')
+                else:
+                    database_origem = database
+                    tabela_principal = origem_cfg
+            
+            if not tabela_principal:
+                continue
             
             # Ler tabela principal completa (para obter todas as colunas)
-            tabela_principal = principais[origem]
             try:
                 particao = self.glue_handler.get_last_partition(
-                    database=database,
+                    database=database_origem,
                     table_name=tabela_principal,
                     partition_key=self.PARTITION_KEY,
                     region_name=getattr(self.config, 'aws_region', None)
@@ -442,13 +501,28 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                 filtro = None
             
             df_completo = self.glue_handler.read_from_catalog(
-                database=database,
+                database=database_origem,
                 table_name=tabela_principal,
                 filter=filtro
             )
             
             # Join vencedores com registros completos
-            join_keys = [F.col(c) for c in chaves_principais]
+            # IMPORTANTE: No SQL original, o join final traz todas as colunas da tabela principal (sor.* ou sot.*)
+            # Mas o df_ranked já contém algumas colunas dos auxiliares. Precisamos garantir que não há duplicatas
+            # Selecionar apenas colunas da tabela principal que não estão em vencedores_origem (exceto chaves de join)
+            colunas_vencedores = set(vencedores_origem.columns)
+            colunas_completo = set(df_completo.columns)
+            colunas_join = set(chaves_principais)
+            
+            # Colunas a selecionar do df_completo: todas, mas se houver duplicatas (não de join), manter apenas uma
+            # O Spark remove automaticamente colunas duplicadas de chaves de join, mas não de outras colunas
+            colunas_para_join = [col for col in df_completo.columns 
+                               if col not in colunas_vencedores or col in colunas_join]
+            
+            # Se há colunas duplicadas (não de join), selecionar apenas as necessárias
+            if len(colunas_para_join) < len(df_completo.columns):
+                df_completo = df_completo.select(*colunas_para_join)
+            
             df_completo_join = vencedores_origem.join(
                 df_completo,
                 on=chaves_principais,
@@ -465,21 +539,11 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         if len(dfs_completos) == 1:
             return dfs_completos[0]
         
-        # Garantir que todos os DataFrames tenham colunas únicas antes do union
-        dfs_unicos = []
-        for df in dfs_completos:
-            colunas_unicas = []
-            colunas_vistas = set()
-            for col in df.columns:
-                if col not in colunas_vistas:
-                    colunas_unicas.append(col)
-                    colunas_vistas.add(col)
-            # Usar F.col() para evitar ambiguidade de referência
-            df_unico = df.select([F.col(c) for c in colunas_unicas])
-            dfs_unicos.append(df_unico)
-        
-        resultado = dfs_unicos[0]
-        for df in dfs_unicos[1:]:
+        # Unir resultados diretamente - o Spark lida com colunas duplicadas de join automaticamente
+        # Se houver colunas duplicadas por nome (não de join), o unionByName falhará
+        # Mas isso não deve acontecer se os joins foram feitos corretamente
+        resultado = dfs_completos[0]
+        for df in dfs_completos[1:]:
             resultado = resultado.unionByName(df, allowMissingColumns=True)
         
         return resultado
@@ -539,7 +603,7 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                 path=output_path,
                 format=self.config.default_output_format
             )
-    
+
     def get_processor_name(self) -> str:
         """Retorna o nome do processador."""
-        return "FlexibleConsolidationProcessor"
+        return self.__class__.__name__

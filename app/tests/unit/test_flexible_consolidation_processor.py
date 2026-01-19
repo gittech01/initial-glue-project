@@ -29,13 +29,13 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         self.mock_journey_controller = MagicMock()
         self.mock_dynamodb_handler = MagicMock()
         
-        # Configuração com CONSOLIDACOES
+        # Configuração com consolidacoes_tabelas
         self.config = AppConfig()
-        self.config.CONSOLIDACOES = {
+        self.config.consolidacoes_tabelas = {
             'tbl_processado_operacao_consolidada': {
                 'principais': {
-                    'sor': 'tbl_processado_operacao_sor',
-                    'sot': 'tbl_processado_operacao_apropriada'
+                    'sor': {'database': 'db_test', 'table': 'tbl_processado_operacao_sor'},
+                    'sot': {'database': 'db_test', 'table': 'tbl_processado_operacao_apropriada'}
                 },
                 'auxiliares': {
                     'sor': {
@@ -106,12 +106,12 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
     def test_init(self):
         """Testa inicialização do processador."""
         self.assertEqual(self.processor.glue_handler, self.mock_glue_handler)
-        self.assertEqual(self.processor.consolidacoes_config, self.config.CONSOLIDACOES)
+        self.assertEqual(self.processor.consolidacoes_config, self.config.consolidacoes_tabelas)
     
     def test_init_without_consolidacoes(self):
-        """Testa inicialização sem CONSOLIDACOES no config."""
+        """Testa inicialização sem consolidacoes_tabelas no config."""
         config_empty = AppConfig()
-        config_empty.CONSOLIDACOES = {}
+        config_empty.consolidacoes_tabelas = {}
         
         processor = FlexibleConsolidationProcessor(
             glue_handler=self.mock_glue_handler,
@@ -137,7 +137,7 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         self.assertIn("tabela_consolidada", str(context.exception))
     
     def test_read_data_table_not_found(self):
-        """Testa erro quando tabela_consolidada não existe no CONSOLIDACOES."""
+        """Testa erro quando tabela_consolidada não existe em consolidacoes_tabelas."""
         with self.assertRaises(ValueError) as context:
             self.processor._read_data(
                 database='db_test',
@@ -150,7 +150,7 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         """Testa leitura usando consolidation_config direto."""
         consolidation_config = {
             'principais': {
-                'sor': 'tbl_sor'
+                'sor': {'database': 'db_test', 'table': 'tbl_sor'}
             },
             'auxiliares': {},
             'joins_auxiliares': {}
@@ -345,8 +345,8 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         
         regra_cfg = {
             'principais': {
-                'sor': 'tbl_sor',
-                'sot': 'tbl_sot'
+                'sor': {'database': 'db_test', 'table': 'tbl_sor'},
+                'sot': {'database': 'db_test', 'table': 'tbl_sot'}
             }
         }
         
@@ -436,10 +436,15 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         """Testa fluxo completo do process."""
         # Mock dos métodos internos - usar return_value para evitar StopIteration
         self.mock_glue_handler.get_last_partition.return_value = '20240116'
-        # Usar uma função que sempre retorna o DataFrame para evitar esgotar side_effect
+        # Usar uma função que retorna DataFrame correto baseado no nome da tabela
         def read_mock(*args, **kwargs):
-            # Retornar df_sor ou df_sot alternadamente baseado no contexto
-            return self.df_sor
+            table_name = kwargs.get('table_name', args[1] if len(args) > 1 else '')
+            # Retornar df_sor para tabelas sor, df_sot para tabelas sot
+            if 'sor' in table_name.lower():
+                return self.df_sor
+            elif 'sot' in table_name.lower() or 'apropriada' in table_name.lower():
+                return self.df_sot
+            return self.df_sor  # Default
         self.mock_glue_handler.read_from_catalog = read_mock
         self.mock_dynamodb_handler.save_congregado.return_value = {
             'id': 'test_id',

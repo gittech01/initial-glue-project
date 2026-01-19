@@ -5,7 +5,7 @@ Define a interface comum e o template de execução para todas as regras de neg�
 garantindo consistência e permitindo extensão através de herança.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Any
+from typing import Dict, Any
 from pyspark.sql import DataFrame
 import logging
 
@@ -233,15 +233,8 @@ class BaseBusinessProcessor(ABC):
         Returns:
             Dicionário com metadados
         """
-        return {
-            'processor_type': self.__class__.__name__
-        }
+        return { 'processor_type': self.__class__.__name__ }
     
     def get_processor_name(self) -> str:
-        """
-        Retorna o nome do processador.
-        
-        Returns:
-            Nome do processador
-        """
+        """Retorna o nome do processador (Nome da Classe)."""
         return self.__class__.__name__

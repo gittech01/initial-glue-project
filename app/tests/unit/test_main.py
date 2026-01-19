@@ -40,10 +40,13 @@ class TestMain(unittest.TestCase):
         mock_config.congregado_table_name = 'congregado_table'
         mock_config.aws_region = 'us-east-1'
         mock_config.default_output_format = 'parquet'
-        # Mock CONSOLIDACOES para permitir execução
-        mock_config.CONSOLIDACOES = {
+        # Mock consolidacoes_tabelas para permitir execução
+        mock_config.consolidacoes_tabelas = {
             'tbl_test': {
-                'principais': {'sor': 'tbl_sor', 'sot': 'tbl_sot'},
+                'principais': {
+                    'sor': {'database': 'db_test', 'table': 'tbl_sor'},
+                    'sot': {'database': 'db_test', 'table': 'tbl_sot'}
+                },
                 'chaves_principais': ['key1'],
                 'campos_decisao': ['field1']
             }

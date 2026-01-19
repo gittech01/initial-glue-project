@@ -26,13 +26,13 @@ def spark():
 
 @pytest.fixture
 def config():
-    """Fixture para AppConfig com CONSOLIDACOES."""
+    """Fixture para AppConfig com consolidacoes_tabelas."""
     config = AppConfig()
-    config.CONSOLIDACOES = {
+    config.consolidacoes_tabelas = {
         'tbl_processado_operacao_consolidada': {
             'principais': {
-                'sor': 'tbl_processado_operacao_sor',
-                'sot': 'tbl_processado_operacao_apropriada'
+                'sor': {'database': 'db_test', 'table': 'tbl_processado_operacao_sor'},
+                'sot': {'database': 'db_test', 'table': 'tbl_processado_operacao_apropriada'}
             },
             'auxiliares': {},  # Sem auxiliares para simplificar testes
             'joins_auxiliares': {},  # Sem joins para simplificar testes

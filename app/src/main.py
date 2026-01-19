@@ -42,18 +42,15 @@ from utils.dynamodb_handler import DynamoDBHandler
 from utils.business.processor_factory import ProcessorFactory
 from utils.business.orchestrator import BusinessRuleOrchestrator
 
+
 # Configurar logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
 def initialize_glue_context() -> tuple:
     """
     Inicializa o contexto do AWS Glue.
-    
     Returns:
         Tupla (sc, glue_context, job, args)
     """
@@ -86,7 +83,7 @@ def main():
     
     Comportamento:
     - Se 'tabela_consolidada' for fornecido: executa apenas essa consolidação
-    - Se 'tabela_consolidada' não for fornecido: executa todas as consolidações do CONSOLIDACOES
+    - Se 'tabela_consolidada' não for fornecido: executa todas as consolidações do consolidacoes_tabelas
     - Não interrompe outras consolidações caso uma falhe (continue_on_error=True)
     """
     try:
@@ -98,9 +95,9 @@ def main():
         logger.info("Configurações carregadas")
         
         # Verificar se há consolidações configuradas
-        consolidacoes_config = getattr(config, 'CONSOLIDACOES', {})
+        consolidacoes_config = getattr(config, 'consolidacoes_tabelas', {})
         if not consolidacoes_config:
-            logger.warning("Nenhuma consolidação encontrada em CONSOLIDACOES")
+            logger.warning("Nenhuma consolidação encontrada em consolidacoes_tabelas")
             return {'status': 'warning', 'message': 'Nenhuma consolidação configurada'}
         
         # Inicializar handlers
@@ -142,7 +139,7 @@ def main():
         if tabela_consolidada:
             if tabela_consolidada not in consolidacoes_config:
                 raise ValueError(
-                    f"Tabela consolidada '{tabela_consolidada}' não encontrada em CONSOLIDACOES. "
+                    f"Tabela consolidada '{tabela_consolidada}' não encontrada em consolidacoes_tabelas. "
                     f"Disponíveis: {list(consolidacoes_config.keys())}"
                 )
             tabelas_a_processar = [tabela_consolidada]
