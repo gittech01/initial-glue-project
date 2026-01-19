@@ -44,12 +44,12 @@ A regra de negócio aplicada a posição da operação é a seguinte:
 
 -- Consulta base SoR (Online)
 with cte_sql_sor as (
-    select oper.num_oper,
-            oper.cod_idef_ver_oper,
+    select oper.num_oper as num_oper,
+            oper.cod_idef_ver_oper as cod_idef_ver_oper,
 
-            posi.dat_vlr_even_oper,
-            posi.num_prio_even_oper,
-            posi.dat_recm_even_oper,
+            posi.dat_vlr_even_oper as dat_vlr_even_oper,
+            posi.num_prio_even_oper as num_prio_even_oper,
+            posi.dat_recm_even_oper as dat_recm_even_oper,
             'online' as origem
      from db_online.tbl_operecao_sor oper
               inner join db_online.tbl_evento_processado_sor event
@@ -64,12 +64,13 @@ with cte_sql_sor as (
 
 -- Consulta base SoT (Batch)
 , cte_sql_sot as (
-    select oper.num_oper,
-         oper.cod_idef_ver_oper,
+    select 
+         oper.num_oper as num_oper,
+         oper.cod_idef_ver_oper as cod_idef_ver_oper,
 
-         posi.dat_vlr_even_oper,
-         posi.num_prio_even_oper,
-         posi.dat_recm_even_oper,
+         posi.dat_vlr_even_oper as dat_vlr_even_oper,
+         posi.num_prio_even_oper as num_prio_even_oper,
+         posi.dat_recm_even_oper as dat_recm_even_oper,
          'batch' as origem
     from db_batch.tbl_operecao_apropriada oper
            inner join db_batch.tbl_evento_processado_apropriada event
