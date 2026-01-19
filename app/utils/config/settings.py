@@ -25,12 +25,14 @@ class AppConfig:
         self.aws_region: str = 'sa-east-1'
         
         # DynamoDB Tables
+        # Apenas journey_table_name é usado para controle de jornada (idempotência e retry)
+        # Os dados consolidados são salvos diretamente no S3 e Glue Catalog
         self.journey_table_name: str = 'journey_control'
-        self.congregado_table_name: str = 'congregado_data'
         
         # Glue Configuration
         self.default_database_output: str = 'default_database'
         self.default_output_format: str = 'parquet'
+        self.default_compression: str = 'snappy'  # Compressão padrão para Parquet
         
         # Retry Configuration
         self.max_retries: int = 3
@@ -204,8 +206,7 @@ class AppConfig:
         return (
             f"AppConfig("
             f"region={self.aws_region}, "
-            f"journey_table={self.journey_table_name}, "
-            f"congregado_table={self.congregado_table_name}"
+            f"journey_table={self.journey_table_name}"
             f")"
         )
             

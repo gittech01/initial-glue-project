@@ -205,7 +205,7 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
             {'left': 'oper', 'right': 'event', 'on': [('num_oper', 'num_oper')], 'how': 'inner'}
         ]
         
-        result = self.processor._read_origem_com_auxiliares(
+        result, particao = self.processor._read_origem_com_auxiliares(
             database='db_test',
             tabela_principal='tbl_principal',
             auxiliares=auxiliares,
@@ -213,6 +213,7 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         )
         
         self.assertIsNotNone(result)
+        self.assertEqual(particao, '20240116')  # Verificar que partição foi retornada
         self.assertGreater(self.mock_glue_handler.read_from_catalog.call_count, 1)
     
     def test_read_origem_com_auxiliares_no_partition(self):
@@ -220,7 +221,7 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         self.mock_glue_handler.get_last_partition.return_value = None
         self.mock_glue_handler.read_from_catalog.return_value = self.df_sor
         
-        result = self.processor._read_origem_com_auxiliares(
+        result, particao = self.processor._read_origem_com_auxiliares(
             database='db_test',
             tabela_principal='tbl_principal',
             auxiliares={},
@@ -228,6 +229,7 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         )
         
         self.assertIsNotNone(result)
+        self.assertIsNone(particao)  # Verificar que partição é None quando não há partição
         # Deve ser chamado sem filtro de partição
         call_args = self.mock_glue_handler.read_from_catalog.call_args
         self.assertIsNone(call_args[1].get('filter'))
@@ -273,6 +275,67 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         
         self.assertIsInstance(result, dict)
         self.assertIn('df_consolidado', result)
+    
+    def test_transform_data_with_ranking_preferencia_online_empate(self):
+        """
+        Testa que em caso de empate, a origem 'online' é preferida sobre 'batch'.
+        
+        Cenário: Dois registros com mesmas chaves principais e mesmos valores
+        em todos os campos de decisão, mas origens diferentes.
+        Resultado esperado: Apenas o registro 'online' deve ter rank=1.
+        """
+        from datetime import datetime
+        
+        # Criar dados com EMPATE TOTAL (mesmos valores em todos os campos de decisão)
+        schema = StructType([
+            StructField('num_oper', IntegerType(), True),
+            StructField('cod_idef_ver_oper', StringType(), True),
+            StructField('dat_vlr_even_oper', StringType(), True),
+            StructField('num_prio_even_oper', IntegerType(), True),
+            StructField('dat_recm_even_oper', StringType(), True),
+            StructField('origem', StringType(), True)
+        ])
+        
+        # Dois registros com EMPATE TOTAL (mesmos valores em todos os campos de decisão)
+        data = [
+            (12345, 'v1', '2024-01-15', 5, '2024-01-15 10:00:00', 'online'),
+            (12345, 'v1', '2024-01-15', 5, '2024-01-15 10:00:00', 'batch')  # EMPATE TOTAL
+        ]
+        
+        df_unificado = self.spark.createDataFrame(data, schema)
+        
+        # Configurar regra com chaves principais e campos de decisão
+        self.processor._current_config = {
+            'chaves_principais': ['num_oper', 'cod_idef_ver_oper'],
+            'campos_decisao': ['dat_vlr_even_oper', 'num_prio_even_oper', 'dat_recm_even_oper']
+        }
+        self.processor._current_tabela_consolidada = 'tbl_test'
+        
+        # Executar transformação
+        result = self.processor._transform_data(df_unificado)
+        
+        # Verificar resultado
+        self.assertIsInstance(result, dict)
+        self.assertIn('df_consolidado', result)
+        
+        df_resultado = result['df_consolidado']
+        
+        # Verificar que apenas o registro 'online' está no resultado
+        # (em caso de empate, 'online' deve ser preferido)
+        registros_resultado = df_resultado.collect()
+        
+        # Deve haver apenas 1 registro (o 'online')
+        self.assertEqual(len(registros_resultado), 1, 
+                        "Em caso de empate, apenas 'online' deve ser escolhido")
+        
+        # O registro escolhido deve ser 'online'
+        registro_escolhido = registros_resultado[0]
+        self.assertEqual(registro_escolhido['origem'], 'online',
+                        "Em caso de empate, 'online' deve ser preferido sobre 'batch'")
+        
+        # Verificar que o registro escolhido tem os valores corretos
+        self.assertEqual(registro_escolhido['num_oper'], 12345)
+        self.assertEqual(registro_escolhido['cod_idef_ver_oper'], 'v1')
     
     def test_transform_data_with_ranking(self):
         """Testa transformação com ranking."""
@@ -446,10 +509,9 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
                 return self.df_sot
             return self.df_sor  # Default
         self.mock_glue_handler.read_from_catalog = read_mock
-        self.mock_dynamodb_handler.save_congregado.return_value = {
-            'id': 'test_id',
-            'version': 1
-        }
+        # DynamoDBHandler não é mais usado para salvar congregados
+        # Dados são salvos diretamente no S3/Glue Catalog via _write_output
+        self.mock_glue_handler.write_to_catalog = MagicMock()
         
         result = self.processor.process(
             database='db_test',
@@ -458,7 +520,7 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         
         self.assertIsInstance(result, dict)
         self.assertEqual(result['status'], 'success')
-        self.assertIn('congregado_id', result)
+        # congregado_id não é mais retornado - dados são salvos no S3/Glue Catalog
     
     def test_process_with_output_path(self):
         """Testa process com output_path."""
@@ -468,15 +530,11 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
             return self.df_sor
         self.mock_glue_handler.read_from_catalog = read_mock
         self.mock_glue_handler.write_to_catalog = MagicMock()
-        self.mock_dynamodb_handler.save_congregado.return_value = {
-            'id': 'test_id',
-            'version': 1
-        }
+        # DynamoDBHandler não é mais usado para salvar congregados
         
         result = self.processor.process(
             database='db_test',
-            tabela_consolidada='tbl_processado_operacao_consolidada',
-            output_path='s3://bucket/path'
+            tabela_consolidada='tbl_processado_operacao_consolidada'
         )
         
         self.assertIsInstance(result, dict)

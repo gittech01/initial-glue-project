@@ -54,7 +54,7 @@ def test_end_to_end_flow(spark, mock_glue_context):
             'JOB_NAME': 'test_job',
             'database': 'test_db',
             'tabela_consolidada': 'test_table',
-            'output_path': 's3://bucket/output',
+            'output_path_s3': 's3://bucket/output',
             'continue_on_error': 'true'
         }
         

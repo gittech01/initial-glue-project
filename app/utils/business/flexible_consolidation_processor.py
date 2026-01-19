@@ -12,7 +12,7 @@ Suporta:
 - Casos com uma ou múltiplas origens
 """
 import logging
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
@@ -137,7 +137,8 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             # Ler dados com auxiliares (se houver) ou tabela principal (se não houver auxiliares)
             # IMPORTANTE: No SQL original, se há auxiliares, os joins iniciam APENAS com auxiliares
             # A tabela principal só é usada para obter a última partição e no join final
-            df = self._read_origem_com_auxiliares(
+            # CRÍTICO: Retornar também a partição obtida para garantir consistência no join final
+            df, particao_usada = self._read_origem_com_auxiliares(
                 database=database_origem,
                 tabela_principal=tabela_principal,
                 auxiliares=auxiliares.get(origem, {}),
@@ -145,15 +146,18 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                 colunas_necessarias=colunas_necessarias if colunas_necessarias else None
             )
             
-            # Armazenar referência da tabela principal para uso no join final
+            # Armazenar referência da tabela principal E a partição usada para uso no join final
             # (não armazenamos o DataFrame completo aqui para economizar memória)
+            # CRÍTICO: Armazenar a partição garante que o join final use a MESMA partição
+            # evitando inconsistências se novas partições forem criadas entre as leituras
             if not hasattr(self, '_dataframes_originais'):
                 self._dataframes_originais = {}
-            # Armazenar apenas metadados da tabela principal, não o DataFrame completo
-            # O DataFrame completo será lido no join final
+            # Armazenar metadados da tabela principal + partição usada
+            # O DataFrame completo será lido no join final usando a MESMA partição
             self._dataframes_originais[origem] = {
                 'database': database_origem,
-                'table': tabela_principal
+                'table': tabela_principal,
+                'particao': particao_usada  # Armazenar partição para garantir consistência
             }
             
             # Marcar origem
@@ -180,7 +184,7 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         auxiliares: Dict[str, str],
         joins_auxiliares: List[Dict],
         colunas_necessarias: List[str] = None
-    ) -> DataFrame:
+    ) -> Tuple[DataFrame, Optional[str]]:
         """
         Lê tabela principal e aplica joins com auxiliares dinamicamente.
         
@@ -193,9 +197,13 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                                 (se None, retorna todas as colunas)
         
         Returns:
-            DataFrame com joins aplicados (e colunas selecionadas se especificado)
+            Tupla (DataFrame, partição_usada):
+            - DataFrame com joins aplicados (e colunas selecionadas se especificado)
+            - Partição usada (string ou None) para garantir consistência no join final
         """
         # Obter última partição da tabela principal
+        # CRÍTICO: Armazenar esta partição para reutilizar no join final
+        particao_usada = None
         try:
             particao = self.glue_handler.get_last_partition(
                 database=database,
@@ -204,6 +212,7 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                 region_name=getattr(self.config, 'aws_region', None)
             )
             if particao:
+                particao_usada = particao  # Armazenar partição obtida
                 filtro = f"{self.PARTITION_KEY} = '{particao}'"
                 logger.info(f"Filtrando {tabela_principal} por partição: {particao}")
             else:
@@ -220,9 +229,9 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             filter=filtro
         )
         
-        # Se não há auxiliares, retornar direto
+        # Se não há auxiliares, retornar direto (com partição usada)
         if not auxiliares or not joins_auxiliares:
-            return df_principal
+            return df_principal, particao_usada
         
         # Ler auxiliares
         dfs_aux = {}
@@ -339,7 +348,8 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             else:
                 logger.warning(f"Nenhuma das colunas necessárias encontrada: {colunas_necessarias}")
         
-        return df_resultado
+        # Retornar DataFrame e partição usada para garantir consistência no join final
+        return df_resultado, particao_usada
     
     # -------------------------------------------------------------------------
     # TRANSFORM - Hook Method (BaseBusinessProcessor)
@@ -401,10 +411,22 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         )
         
         # Construir window specification
-        # IMPORTANTE: No SQL original, o ORDER BY do ranking NÃO inclui preferência por origem
-        # A preferência por origem só aparece no join final (linha 121: and rank_oper.origem = 'online')
+        # IMPORTANTE: A regra de negócio declarada (linha 38 do SQL) diz "preferência por 'online'"
+        # Para garantir isso em caso de empate, adicionamos origem no ORDER BY como último critério
         partition_cols = [F.col(c) for c in chaves_principais]
         order_cols = [F.col(c).desc_nulls_last() for c in campos_decisao]
+        
+        # Adicionar preferência por origem 'online' como último critério de desempate
+        # (apenas se houver múltiplas origens)
+        # Isso garante que em caso de empate em todos os campos de decisão, apenas 'online' seja escolhido
+        origens_unicas = df_unificado.select('origem').distinct().count()
+        if origens_unicas > 1:
+            # Preferir 'online' sobre 'batch' em caso de empate
+            # Quando origem='online', valor=1; caso contrário, valor=0
+            # Ordenar DESC para que 1 (online) venha antes de 0 (batch)
+            ordem_origem = F.when(F.col('origem') == F.lit('online'), 1).otherwise(0)
+            order_cols.append(ordem_origem.desc())
+            logger.info("Preferência por origem 'online' adicionada como critério de desempate no ranking")
         
         window_spec = Window.partitionBy(*partition_cols).orderBy(*order_cols)
         
@@ -489,16 +511,31 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
                 continue
             
             # Ler tabela principal completa (para obter todas as colunas)
-            try:
-                particao = self.glue_handler.get_last_partition(
-                    database=database_origem,
-                    table_name=tabela_principal,
-                    partition_key=self.PARTITION_KEY,
-                    region_name=getattr(self.config, 'aws_region', None)
-                )
-                filtro = f"{self.PARTITION_KEY} = '{particao}'" if particao else None
-            except:
-                filtro = None
+            # CRÍTICO: Reutilizar a MESMA partição obtida na primeira leitura
+            # Isso garante consistência: os dados do ranking e do join final vêm da mesma partição
+            particao_reutilizada = None
+            if isinstance(metadata, dict) and 'particao' in metadata:
+                # Usar partição armazenada da primeira leitura
+                particao_reutilizada = metadata['particao']
+                logger.info(f"Reutilizando partição '{particao_reutilizada}' obtida na primeira leitura para garantir consistência")
+            
+            if particao_reutilizada:
+                filtro = f"{self.PARTITION_KEY} = '{particao_reutilizada}'"
+            else:
+                # Fallback: obter última partição (caso partição não tenha sido armazenada)
+                try:
+                    particao = self.glue_handler.get_last_partition(
+                        database=database_origem,
+                        table_name=tabela_principal,
+                        partition_key=self.PARTITION_KEY,
+                        region_name=getattr(self.config, 'aws_region', None)
+                    )
+                    filtro = f"{self.PARTITION_KEY} = '{particao}'" if particao else None
+                    if particao:
+                        logger.warning(f"Partição não estava armazenada. Obtida nova partição: {particao}. Pode haver inconsistência!")
+                except:
+                    filtro = None
+                    logger.warning(f"Erro ao obter partição. Lendo todas as partições (pode haver inconsistência!)")
             
             df_completo = self.glue_handler.read_from_catalog(
                 database=database_origem,
@@ -568,18 +605,44 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         }
     
     def _should_write_output(self, **kwargs) -> bool:
-        """Determina se deve escrever output."""
-        return kwargs.get('output_path') is not None
-    
-    def _write_output(self, df: DataFrame, transformed_data: Dict, output_path: str, **kwargs):
         """
-        Escreve resultado no catálogo ou S3.
+        Determina se deve escrever output.
         
-        Se tabela_consolidada for fornecida, escreve no catálogo.
-        Caso contrário, escreve no S3.
+        IMPORTANTE: Sempre retorna True se houver tabela_consolidada + database,
+        pois os dados devem sempre ser salvos no S3 e atualizar o Glue Catalog.
         """
         tabela_consolidada = kwargs.get('tabela_consolidada')
         database = kwargs.get('database')
+        
+        # Sempre salvar se houver tabela_consolidada + database (S3 + Glue Catalog)
+        if tabela_consolidada and database:
+            return True
+        
+        # Se não houver, não salvar (output_path não é mais suportado sozinho)
+        return False
+    
+    def _write_output(self, df: DataFrame, transformed_data: Dict, output_path: str, **kwargs):
+        """
+        Escreve resultado no S3 e atualiza o catálogo do AWS Glue.
+        
+        IMPORTANTE: Sempre salva no S3 e atualiza a partição no catálogo do Glue.
+        - Formato: Parquet
+        - Compressão: Snappy (padrão)
+        
+        Requer tabela_consolidada + database:
+        - Salva no S3 na localização da tabela no catálogo
+        - Atualiza o catálogo com nova partição
+        
+        O output_path não é mais suportado sozinho (deve sempre atualizar o catálogo).
+        """
+        tabela_consolidada = kwargs.get('tabela_consolidada')
+        database = kwargs.get('database')
+        
+        if not tabela_consolidada or not database:
+            raise ValueError(
+                "tabela_consolidada e database são obrigatórios para salvar dados. "
+                "Os dados devem sempre ser salvos no S3 e atualizar o Glue Catalog."
+            )
         
         # Obter DataFrame consolidado do transformed_data
         df_consolidado = transformed_data.get('df_consolidado')
@@ -587,22 +650,21 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             logger.warning("DataFrame consolidado não encontrado em transformed_data. Usando df original.")
             df_consolidado = df
         
-        if tabela_consolidada and database:
-            # Escrever no catálogo Glue
-            logger.info(f"Escrevendo no catálogo: {database}.{tabela_consolidada}")
-            self.glue_handler.write_to_catalog(
-                df=df_consolidado,
-                database=database,
-                table_name=tabela_consolidada
-            )
-        else:
-            # Escrever no S3
-            logger.info(f"Escrevendo no S3: {output_path}")
-            self.glue_handler.write_to_s3(
-                df=df_consolidado,
-                path=output_path,
-                format=self.config.default_output_format
-            )
+        # Obter compressão da configuração (padrão: snappy)
+        compression = getattr(self.config, 'default_compression', 'snappy')
+        
+        # Sempre salvar no S3 e atualizar o catálogo do Glue
+        logger.info(
+            f"Escrevendo no S3 e atualizando catálogo: {database}.{tabela_consolidada} "
+            f"(formato: parquet, compressão: {compression})"
+        )
+        self.glue_handler.write_to_catalog(
+            df=df_consolidado,
+            database=database,
+            table_name=tabela_consolidada,
+            compression=compression
+        )
+        logger.info(f"✓ Dados salvos no S3 e partição atualizada no catálogo Glue")
 
     def get_processor_name(self) -> str:
         """Retorna o nome do processador."""

@@ -16,7 +16,7 @@ class TestAppConfig(unittest.TestCase):
         
         self.assertEqual(config.aws_region, 'sa-east-1')
         self.assertEqual(config.journey_table_name, 'journey_control')
-        self.assertEqual(config.congregado_table_name, 'congregado_data')
+        # congregado_table_name foi removido - dados são salvos no S3/Glue Catalog
         self.assertEqual(config.default_database_output, 'default_database')
         self.assertEqual(config.default_output_format, 'parquet')
         self.assertEqual(config.max_retries, 3)
@@ -37,7 +37,7 @@ class TestAppConfig(unittest.TestCase):
         # Verificar que os atributos existem
         self.assertIsNotNone(config.aws_region)
         self.assertIsNotNone(config.journey_table_name)
-        self.assertIsNotNone(config.congregado_table_name)
+        # congregado_table_name foi removido - dados são salvos no S3/Glue Catalog
 
 
 

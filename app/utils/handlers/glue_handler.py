@@ -39,9 +39,7 @@ def _get_glue_client(region_name: str = None):
         return boto3.client("glue", region_name=region_name)
     # Tentar obter região do ambiente ou usar padrão
     try:
-        import os
-        region = os.environ.get('AWS_DEFAULT_REGION', 'sa-east-1')
-        return boto3.client("glue", region_name=region)
+        return boto3.client("glue", region_name='sa-east-1')
     except Exception:
         # Fallback: retornar mock em ambiente de teste
         return MagicMock()
@@ -80,11 +78,32 @@ class GlueDataHandler:
         )
         return dynamic_frame.toDF()
 
-    def write_to_s3(self, df: DataFrame, path: str, format: str = "parquet", partition_cols: list = None):
+    def write_to_s3(
+        self, 
+        df: DataFrame, 
+        path: str, 
+        format: str = "parquet", 
+        partition_cols: list = None,
+        compression: str = "snappy"
+    ):
         """
         Escreve um DataFrame Spark no S3 usando o GlueContext para melhor integração com o catálogo.
+        
+        Args:
+            df: DataFrame Spark
+            path: Caminho S3 (ex: s3://bucket/path/)
+            format: Formato de arquivo (padrão: parquet)
+            partition_cols: Lista de colunas para particionamento
+            compression: Tipo de compressão (padrão: snappy)
         """
         dynamic_frame = DynamicFrame.fromDF(df, self.glue_context, "dynamic_frame")
+        
+        # Configurar opções de formato com compressão
+        format_options = {}
+        if format == "parquet":
+            format_options = {
+                "compression": compression
+            }
         
         self.glue_context.write_dynamic_frame.from_options(
             frame=dynamic_frame,
@@ -94,21 +113,77 @@ class GlueDataHandler:
                 "partitionKeys": partition_cols or []
             },
             format=format,
+            format_options=format_options,
             transformation_ctx="write_to_s3"
         )
 
-    def write_to_catalog(self, df: DataFrame, database: str, table_name: str):
+    def write_to_catalog(
+        self, 
+        df: DataFrame, 
+        database: str, 
+        table_name: str,
+        compression: str = "snappy"
+    ):
         """
-        Escreve dados e atualiza o Glue Data Catalog.
+        Escreve dados no S3 e atualiza o Glue Data Catalog com nova partição.
+        
+        IMPORTANTE: Este método sempre salva no S3 (localização da tabela no catálogo)
+        e atualiza o catálogo com a nova partição.
+        
+        Formato: Parquet com compressão Snappy (padrão)
+        
+        Args:
+            df: DataFrame Spark
+            database: Nome do banco de dados no Glue Catalog
+            table_name: Nome da tabela no Glue Catalog
+            compression: Tipo de compressão (padrão: snappy)
         """
         dynamic_frame = DynamicFrame.fromDF(df, self.glue_context, "dynamic_frame")
         
-        self.glue_context.write_dynamic_frame.from_catalog(
-            frame=dynamic_frame,
-            database=database,
-            table_name=table_name,
-            transformation_ctx="write_to_catalog"
-        )
+        # Obter caminho S3 da tabela do catálogo
+        # Isso permite usar from_options com compressão e ainda atualizar o catálogo
+        try:
+            import boto3
+            glue_client = boto3.client('glue', region_name='sa-east-1')
+            table_response = glue_client.get_table(DatabaseName=database, Name=table_name)
+            table_location = table_response['Table']['StorageDescriptor']['Location']
+            
+            # Obter colunas de partição da tabela
+            partition_keys = [col['Name'] for col in table_response['Table'].get('PartitionKeys', [])]
+            
+            # Usar from_options para ter controle sobre compressão
+            # O Glue ainda atualiza o catálogo automaticamente quando escreve no caminho da tabela
+            format_options = {
+                "compression": compression
+            }
+            
+            self.glue_context.write_dynamic_frame.from_options(
+                frame=dynamic_frame,
+                connection_type="s3",
+                connection_options={
+                    "path": table_location,
+                    "partitionKeys": partition_keys if partition_keys else [],
+                    "enableUpdateCatalog": True
+                },
+                format="parquet",
+                format_options=format_options,
+                transformation_ctx="write_to_catalog"
+            )
+        except Exception as e:
+            # Fallback: usar from_catalog se não conseguir obter o caminho
+            # Nota: from_catalog pode não suportar compressão customizada
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Não foi possível obter caminho S3 da tabela {database}.{table_name}. "
+                f"Usando from_catalog (compressão pode não ser aplicada): {e}"
+            )
+            self.glue_context.write_dynamic_frame.from_catalog(
+                frame=dynamic_frame,
+                database=database,
+                table_name=table_name,
+                transformation_ctx="write_to_catalog"
+            )
 
     def get_last_partition(self, database: str, table_name: str, partition_key: str, region_name: str = None):
         """

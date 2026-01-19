@@ -5,7 +5,7 @@ Define a interface comum e o template de execução para todas as regras de neg�
 garantindo consistência e permitindo extensão através de herança.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pyspark.sql import DataFrame
 import logging
 
@@ -37,21 +37,21 @@ class BaseBusinessProcessor(ABC):
         self,
         glue_handler: GlueDataHandler,
         journey_controller: JourneyController,
-        dynamodb_handler: DynamoDBHandler,
-        config: AppConfig
+        dynamodb_handler: Optional[DynamoDBHandler] = None,
+        config: AppConfig = None
     ):
         """
         Inicializa o processador base.
         
         Args:
             glue_handler: Handler para operações Glue
-            journey_controller: Controller de jornada para idempotência
-            dynamodb_handler: Handler para salvar congregado
+            journey_controller: Controller de jornada para idempotência e retry
+            dynamodb_handler: Handler DynamoDB (opcional, não é mais usado - mantido para compatibilidade)
             config: Configurações da aplicação
         """
         self.glue_handler = glue_handler
         self.journey_controller = journey_controller
-        self.dynamodb_handler = dynamodb_handler
+        self.dynamodb_handler = dynamodb_handler  # Mantido para compatibilidade, não é mais usado
         self.config = config
         logger.info(f"{self.__class__.__name__} inicializado")
     
@@ -65,8 +65,7 @@ class BaseBusinessProcessor(ABC):
         Este método define o fluxo padrão que todas as regras de negócio seguem:
         1. Ler dados
         2. Transformar dados (hook method)
-        3. Salvar congregado
-        4. Escrever resultado (opcional)
+        3. Escrever resultado no S3 e atualizar Glue Catalog
         
         Subclasses não devem sobrescrever este método, apenas os hooks.
         
@@ -88,27 +87,24 @@ class BaseBusinessProcessor(ABC):
             transformed_data = self._transform_data(df, **kwargs)
             logger.info(f"{self.__class__.__name__}: Dados transformados")
             
-            # ETAPA 3: Salvar congregado (idempotente)
-            logger.info(f"{self.__class__.__name__}: Etapa 3 - Salvando congregado")
-            congregado_result = self._save_congregado(transformed_data, **kwargs)
-            logger.info(f"{self.__class__.__name__}: Congregado salvo: {congregado_result}")
-            
-            # ETAPA 4: Escrever resultado (hook method - opcional)
-            output_path = kwargs.get('output_path')
-            if output_path and self._should_write_output(**kwargs):
-                logger.info(f"{self.__class__.__name__}: Etapa 4 - Escrevendo resultado")
+            # ETAPA 3: Escrever resultado no S3 e atualizar Glue Catalog
+            # Sempre salva no S3 e atualiza a partição no catálogo do Glue
+            if self._should_write_output(**kwargs):
+                logger.info(f"{self.__class__.__name__}: Etapa 3 - Escrevendo resultado no S3 e atualizando Glue Catalog")
+                # Obter output_path antes de removê-lo de kwargs (pode ser None)
+                output_path = kwargs.get('output_path')
                 # Remover output_path de kwargs para evitar duplicação
                 write_kwargs = {k: v for k, v in kwargs.items() if k != 'output_path'}
                 self._write_output(df, transformed_data, output_path, **write_kwargs)
-                logger.info(f"{self.__class__.__name__}: Resultado escrito")
+                logger.info(f"{self.__class__.__name__}: Resultado escrito no S3 e catálogo atualizado")
+            else:
+                logger.warning(f"{self.__class__.__name__}: Nenhum destino de saída especificado. Dados não serão salvos.")
             
             # Retornar resultado
             result = {
                 'status': 'success',
                 'record_count': record_count,
                 'transformed_data': transformed_data,
-                'congregado_id': congregado_result.get('id'),
-                'output_path': output_path,
                 'processor_type': self.__class__.__name__
             }
             
@@ -154,25 +150,15 @@ class BaseBusinessProcessor(ABC):
     
     def _save_congregado(self, transformed_data: Dict, **kwargs) -> Dict:
         """
-        Salva congregado no DynamoDB de forma idempotente.
+        DEPRECATED: Este método não é mais usado.
         
-        Pode ser sobrescrito por subclasses se necessário comportamento diferente.
+        Os dados são salvos diretamente no S3 e Glue Catalog via _write_output.
+        O controle de jornada é feito via JourneyController no DynamoDB.
         
-        Args:
-            transformed_data: Dados transformados
-            **kwargs: Parâmetros específicos
-        
-        Returns:
-            Resultado da operação de salvamento
+        Mantido apenas para compatibilidade com código legado.
         """
-        primary_key = self._get_congregado_key(**kwargs)
-        metadata = self._get_congregado_metadata(**kwargs)
-        
-        return self.dynamodb_handler.save_congregado(
-            congregado_data=transformed_data,
-            primary_key=primary_key,
-            metadata=metadata
-        )
+        logger.warning("_save_congregado está deprecated. Dados são salvos via _write_output no S3/Glue Catalog.")
+        return {'id': None, 'status': 'deprecated'}
     
     def _write_output(self, df: DataFrame, transformed_data: Dict, output_path: str, **kwargs):
         """

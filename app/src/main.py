@@ -38,7 +38,6 @@ except ImportError:
 from utils.config.settings import AppConfig
 from utils.handlers.glue_handler import GlueDataHandler
 from utils.journey_controller import JourneyController
-from utils.dynamodb_handler import DynamoDBHandler
 from utils.business.processor_factory import ProcessorFactory
 from utils.business.orchestrator import BusinessRuleOrchestrator
 
@@ -63,6 +62,7 @@ def initialize_glue_context() -> tuple:
         args = getResolvedOptions(sys.argv, [
             'JOB_NAME',
             'database',
+            'output_path_s3',
             'tabela_consolidada',  # Opcional - se não fornecido, executa todas
             'continue_on_error'  # Opcional, padrão True
         ])
@@ -106,10 +106,9 @@ def main():
             table_name=config.journey_table_name,
             region_name=config.aws_region
         )
-        dynamodb_handler = DynamoDBHandler(
-            table_name=config.congregado_table_name,
-            region_name=config.aws_region
-        )
+        # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
+        # Apenas JourneyController usa DynamoDB para controle de jornada (idempotência e retry)
+        dynamodb_handler = None  # Mantido como None para compatibilidade com ProcessorFactory
         
         # Criar orquestrador (não interrompe fluxo em caso de falha)
         continue_on_error = args.get('continue_on_error', 'true').lower() == 'true'
