@@ -52,17 +52,13 @@ class TestBaseBusinessProcessor(unittest.TestCase):
         mock_df = MagicMock()
         mock_df.count.return_value = 100
         self.processor._read_data = MagicMock(return_value=mock_df)
-        
-        self.mock_dynamodb_handler.save_congregado.return_value = {
-            'id': 'test_id',
-            'status': 'created'
-        }
+        self.processor._should_write_output = MagicMock(return_value=False)  # Não escrever output no teste
         
         result = self.processor.process(test_param='value')
         
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['record_count'], 100)
-        self.mock_dynamodb_handler.save_congregado.assert_called_once()
+        # save_congregado não é mais chamado - dados são salvos via _write_output no S3/Glue Catalog
     
     def test_get_processor_name(self):
         """Testa retorno do nome do processador."""

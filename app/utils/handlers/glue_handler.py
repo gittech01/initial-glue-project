@@ -132,6 +132,8 @@ class GlueDataHandler:
         
         Formato: Parquet com compressão Snappy (padrão)
         
+        Usa getSink() que é mais simples e direto ao ponto.
+        
         Args:
             df: DataFrame Spark
             database: Nome do banco de dados no Glue Catalog
@@ -140,9 +142,9 @@ class GlueDataHandler:
         """
         dynamic_frame = DynamicFrame.fromDF(df, self.glue_context, "dynamic_frame")
         
-        # Obter caminho S3 da tabela do catálogo
-        # Isso permite usar from_options com compressão e ainda atualizar o catálogo
+        # Obter caminho S3 da tabela do catálogo e colunas de partição
         try:
+            # Importar boto3 dentro do try para facilitar mock em testes
             import boto3
             glue_client = boto3.client('glue', region_name='sa-east-1')
             table_response = glue_client.get_table(DatabaseName=database, Name=table_name)
@@ -151,32 +153,35 @@ class GlueDataHandler:
             # Obter colunas de partição da tabela
             partition_keys = [col['Name'] for col in table_response['Table'].get('PartitionKeys', [])]
             
-            # Usar from_options para ter controle sobre compressão
-            # O Glue ainda atualiza o catálogo automaticamente quando escreve no caminho da tabela
-            format_options = {
-                "compression": compression
-            }
-            
-            self.glue_context.write_dynamic_frame.from_options(
-                frame=dynamic_frame,
+            # Usar getSink() - mais simples e direto ao ponto
+            # Salva no S3 e atualiza o catálogo automaticamente
+            sink = self.glue_context.getSink(
                 connection_type="s3",
-                connection_options={
-                    "path": table_location,
-                    "partitionKeys": partition_keys if partition_keys else [],
-                    "enableUpdateCatalog": True
-                },
-                format="parquet",
-                format_options=format_options,
-                transformation_ctx="write_to_catalog"
+                path=table_location,
+                enableUpdateCatalog=True,
+                updateBehavior="UPDATE_IN_DATABASE",
+                partitionKeys=partition_keys if partition_keys else []
             )
+            
+            # Configurar formato e compressão
+            sink.setFormat("glueparquet", format_options={"compression": compression})
+            
+            # Configurar informações do catálogo
+            sink.setCatalogInfo(
+                catalogDatabase=database,
+                catalogTableName=table_name
+            )
+            
+            # Escrever dados
+            sink.writeFrame(dynamic_frame)
+            
         except Exception as e:
-            # Fallback: usar from_catalog se não conseguir obter o caminho
-            # Nota: from_catalog pode não suportar compressão customizada
+            # Fallback: usar from_catalog se não conseguir obter o caminho ou usar getSink
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(
-                f"Não foi possível obter caminho S3 da tabela {database}.{table_name}. "
-                f"Usando from_catalog (compressão pode não ser aplicada): {e}"
+                f"Não foi possível usar getSink() para {database}.{table_name}. "
+                f"Usando from_catalog como fallback (compressão pode não ser aplicada): {e}"
             )
             self.glue_context.write_dynamic_frame.from_catalog(
                 frame=dynamic_frame,

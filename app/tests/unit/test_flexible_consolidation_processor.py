@@ -451,8 +451,13 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
     
     def test_should_write_output(self):
         """Testa determinação de escrita de output."""
-        self.assertTrue(self.processor._should_write_output(output_path='s3://bucket/path'))
-        self.assertFalse(self.processor._should_write_output())
+        # Agora requer tabela_consolidada e database para escrever
+        self.assertTrue(self.processor._should_write_output(
+            tabela_consolidada='tbl_test',
+            database='db_test'
+        ))
+        # output_path sozinho não é mais suficiente
+        self.assertFalse(self.processor._should_write_output(output_path='s3://bucket/path'))
     
     def test_write_output_to_catalog(self):
         """Testa escrita no catálogo Glue."""
@@ -472,21 +477,106 @@ class TestFlexibleConsolidationProcessor(unittest.TestCase):
         
         self.mock_glue_handler.write_to_catalog.assert_called_once()
     
-    def test_write_output_to_s3(self):
-        """Testa escrita no S3."""
+    @patch('utils.handlers.glue_handler.boto3')
+    def test_write_output_to_s3(self, mock_boto3):
+        """Testa escrita no S3 e atualização do Glue Catalog."""
+        # Mock do boto3.client para write_to_catalog
+        mock_glue_client = MagicMock()
+        mock_glue_client.get_table.return_value = {
+            'Table': {
+                'StorageDescriptor': {'Location': 's3://bucket/path/'},
+                'PartitionKeys': []
+            }
+        }
+        mock_boto3.client.return_value = mock_glue_client
+        
+        # Mock do getSink
+        mock_sink = MagicMock()
+        self.mock_glue_handler.glue_context.getSink.return_value = mock_sink
+        
         df_result = MagicMock()
         transformed_data = {
             'df_consolidado': self.df_sor,
             'record_count': 10
         }
         
+        # Agora sempre escreve no S3 e atualiza o Glue Catalog
+        # Requer tabela_consolidada e database
         self.processor._write_output(
             df=df_result,
             transformed_data=transformed_data,
-            output_path='s3://bucket/path'
+            output_path='s3://bucket/path',
+            database='db_test',
+            tabela_consolidada='tbl_output'
         )
         
-        self.mock_glue_handler.write_to_s3.assert_called_once()
+        # Agora sempre chama write_to_catalog (que salva no S3 e atualiza o catálogo)
+        self.mock_glue_handler.write_to_catalog.assert_called_once()
+    
+    def test_write_output_missing_params(self):
+        """Testa que _write_output levanta erro se tabela_consolidada ou database estiverem faltando."""
+        df_result = MagicMock()
+        transformed_data = {
+            'df_consolidado': self.df_sor,
+            'record_count': 10
+        }
+        
+        # Testar sem database
+        with self.assertRaises(ValueError) as context:
+            self.processor._write_output(
+                df=df_result,
+                transformed_data=transformed_data,
+                output_path='s3://bucket/path',
+                tabela_consolidada='tbl_output'
+            )
+        self.assertIn('tabela_consolidada e database são obrigatórios', str(context.exception))
+        
+        # Testar sem tabela_consolidada
+        with self.assertRaises(ValueError) as context:
+            self.processor._write_output(
+                df=df_result,
+                transformed_data=transformed_data,
+                output_path='s3://bucket/path',
+                database='db_test'
+            )
+        self.assertIn('tabela_consolidada e database são obrigatórios', str(context.exception))
+    
+    def test_write_output_without_df_consolidado(self):
+        """Testa que _write_output usa df original se df_consolidado não estiver em transformed_data."""
+        from unittest.mock import patch
+        
+        df_result = MagicMock()
+        transformed_data = {
+            'record_count': 10
+            # Sem 'df_consolidado'
+        }
+        
+        with patch('utils.handlers.glue_handler.boto3') as mock_boto3:
+            mock_glue_client = MagicMock()
+            mock_glue_client.get_table.return_value = {
+                'Table': {
+                    'StorageDescriptor': {'Location': 's3://bucket/path/'},
+                    'PartitionKeys': []
+                }
+            }
+            mock_boto3.client.return_value = mock_glue_client
+            
+            mock_sink = MagicMock()
+            self.mock_glue_handler.glue_context.getSink.return_value = mock_sink
+            
+            # Deve usar df_result (df original) quando df_consolidado não está presente
+            self.processor._write_output(
+                df=df_result,
+                transformed_data=transformed_data,
+                output_path='s3://bucket/path',
+                database='db_test',
+                tabela_consolidada='tbl_output'
+            )
+            
+            # Verificar que write_to_catalog foi chamado com df_result
+            self.mock_glue_handler.write_to_catalog.assert_called_once()
+            call_args = self.mock_glue_handler.write_to_catalog.call_args
+            self.assertEqual(call_args[0][0], df_result)  # Primeiro argumento deve ser df_result
     
     def test_get_processor_name(self):
         """Testa nome do processador."""

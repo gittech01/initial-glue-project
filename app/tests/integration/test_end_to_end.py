@@ -75,7 +75,6 @@ def test_end_to_end_flow(spark, mock_glue_context):
                 }
             }
             mock_config.journey_table_name = 'test_journey'
-            mock_config.congregado_table_name = 'test_congregado'
             mock_config.aws_region = 'sa-east-1'
             mock_config_class.return_value = mock_config
             
@@ -107,38 +106,30 @@ def test_end_to_end_flow(spark, mock_glue_context):
                     }
                     mock_orchestrator_class.return_value = mock_orchestrator
                     
-                    # Mock do DynamoDBHandler
-                    with patch('src.main.DynamoDBHandler') as mock_dynamodb_class:
-                        mock_dynamodb = MagicMock()
-                        mock_dynamodb.save_congregado.return_value = {
-                            'id': 'test_db_test_table',
-                            'status': 'created'
-                        }
-                        mock_dynamodb_class.return_value = mock_dynamodb
-                        
-                        # Executar main
-                        from src.main import main
-                        
-                        result = main()
-                        
-                        # Validações - main retorna estrutura diferente
-                        assert result is not None
-                        assert result['status'] in ['success', 'partial_success']
-                        assert result['total'] == 1
-                        assert result['sucessos'] == 1
-                        assert 'resultados' in result
-                        
-                        # Verificar que todos os componentes foram chamados
-                        mock_spark_context.assert_called_once()
-                        mock_glue_class.assert_called_once()
-                        mock_job_class.assert_called_once()
-                        mock_get_options.assert_called_once()
-                        mock_handler_class.assert_called_once()
-                        mock_journey_class.assert_called_once()
-                        mock_dynamodb_class.assert_called_once()
-                        mock_factory_class.create.assert_called_once()
-                        mock_orchestrator.execute_rule.assert_called_once()
-                        mock_job.commit.assert_called_once()
+                    # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
+                    # Executar main
+                    from src.main import main
+                    
+                    result = main()
+                    
+                    # Validações - main retorna estrutura diferente
+                    assert result is not None
+                    assert result['status'] in ['success', 'partial_success']
+                    assert result['total'] == 1
+                    assert result['sucessos'] == 1
+                    assert 'resultados' in result
+                    
+                    # Verificar que todos os componentes foram chamados
+                    mock_spark_context.assert_called_once()
+                    mock_glue_class.assert_called_once()
+                    mock_job_class.assert_called_once()
+                    mock_get_options.assert_called_once()
+                    mock_handler_class.assert_called_once()
+                    mock_journey_class.assert_called_once()
+                    # DynamoDBHandler não é mais necessário
+                    mock_factory_class.create.assert_called_once()
+                    mock_orchestrator.execute_rule.assert_called_once()
+                    mock_job.commit.assert_called_once()
 
 
 def test_data_processor_isolation(spark, mock_glue_context):
@@ -152,7 +143,6 @@ def test_data_processor_isolation(spark, mock_glue_context):
     """
     from utils.handlers.glue_handler import GlueDataHandler
     from utils.journey_controller import JourneyController
-    from utils.dynamodb_handler import DynamoDBHandler
     from utils.config.settings import AppConfig
     from utils.business.flexible_consolidation_processor import FlexibleConsolidationProcessor
     
@@ -162,11 +152,8 @@ def test_data_processor_isolation(spark, mock_glue_context):
         table_name="test_journey",
         dynamodb_client=None  # Modo em memória
     )
-    dynamodb_handler = DynamoDBHandler(
-        table_name="test_congregado",
-        dynamodb_client=None,  # Modo em memória
-        flag_salva=True  # Habilitar salvamento para testes
-    )
+    # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
+    dynamodb_handler = None
     config = AppConfig()
     
     # Configurar múltiplas consolidações para testar isolamento
@@ -240,25 +227,19 @@ def test_data_processor_isolation(spark, mock_glue_context):
     glue_handler.read_from_catalog = MagicMock(side_effect=read_catalog_side_effect)
     glue_handler.write_to_catalog = MagicMock()
     
-    # Mock do DynamoDB para rastrear chamadas e evitar erro de serialização
-    congregado_calls = []
+    # DynamoDBHandler não é mais usado - dados são salvos no S3/Glue Catalog
+    # Rastrear chamadas de write_to_catalog para verificar isolamento
+    write_catalog_calls = []
     
-    def tracked_save(congregado_data, primary_key, metadata=None, **kwargs):
-        # Remover DataFrame do congregado_data para evitar erro de serialização
-        clean_data = {k: v for k, v in congregado_data.items() if not hasattr(v, 'toPandas')}
-        result = {
-            'id': primary_key,
-            'version': 1,
-            'status': 'created'
-        }
-        congregado_calls.append({
-            'primary_key': primary_key,
-            'metadata': metadata,
-            'result': result
+    original_write = glue_handler.write_to_catalog
+    def tracked_write(df, database, table_name, **kwargs):
+        write_catalog_calls.append({
+            'database': database,
+            'table_name': table_name
         })
-        return result
+        return original_write(df, database, table_name, **kwargs)
     
-    dynamodb_handler.save_congregado = tracked_save
+    glue_handler.write_to_catalog = tracked_write
     
     # Mock do JourneyController
     journey_controller.execute_with_journey = MagicMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
@@ -281,21 +262,17 @@ def test_data_processor_isolation(spark, mock_glue_context):
     assert 'record_count' in result1
     assert 'record_count' in result2
     
-    # Verificar que os congregados foram salvos com chaves diferentes
-    assert len(congregado_calls) == 2
-    assert congregado_calls[0]['primary_key'] == 'db1_tbl_consolidada_1'
-    assert congregado_calls[1]['primary_key'] == 'db2_tbl_consolidada_2'
-    
-    # Verificar que os metadados são diferentes
-    assert congregado_calls[0]['metadata']['tabela_consolidada'] == 'tbl_consolidada_1'
-    assert congregado_calls[1]['metadata']['tabela_consolidada'] == 'tbl_consolidada_2'
-    assert congregado_calls[0]['metadata']['database'] == 'db1'
-    assert congregado_calls[1]['metadata']['database'] == 'db2'
+    # Verificar que write_to_catalog foi chamado para tabelas diferentes
+    assert len(write_catalog_calls) == 2
+    assert write_catalog_calls[0]['table_name'] == 'tbl_consolidada_1'
+    assert write_catalog_calls[1]['table_name'] == 'tbl_consolidada_2'
+    assert write_catalog_calls[0]['database'] == 'db1'
+    assert write_catalog_calls[1]['database'] == 'db2'
     
     # Verificar que read_from_catalog foi chamado para tabelas diferentes
     read_calls = glue_handler.read_from_catalog.call_args_list
     assert len(read_calls) >= 2  # Pelo menos 1 tabela por execução
     
     # Verificar que os resultados são diferentes
-    assert result1['congregado_id'] != result2['congregado_id']
     assert result1['processor_type'] == result2['processor_type']  # Mesmo processador
+    # congregado_id não é mais retornado - dados são salvos no S3/Glue Catalog

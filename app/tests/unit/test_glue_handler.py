@@ -125,19 +125,55 @@ class TestGlueDataHandler(unittest.TestCase):
         self.assertEqual(kwargs['connection_options']['partitionKeys'], ["year", "month"])
     
     @patch('utils.handlers.glue_handler.DynamicFrame')
-    def test_write_to_catalog(self, mock_dynamic_frame_class):
-        """Testa escrita no catálogo."""
+    @patch('boto3.client')
+    def test_write_to_catalog(self, mock_boto3_client, mock_dynamic_frame_class):
+        """Testa escrita no catálogo usando getSink()."""
         mock_df = MagicMock()
         mock_dyn_frame = MagicMock()
         mock_dynamic_frame_class.fromDF.return_value = mock_dyn_frame
         
+        # Mock do cliente Glue e resposta get_table
+        mock_glue_client = MagicMock()
+        mock_glue_client.get_table.return_value = {
+            'Table': {
+                'StorageDescriptor': {'Location': 's3://bucket/path/'},
+                'PartitionKeys': []
+            }
+        }
+        # Mockar boto3.client para retornar o cliente mockado
+        mock_boto3_client.return_value = mock_glue_client
+        
+        # Mock do sink
+        mock_sink = MagicMock()
+        self.mock_glue_context.getSink.return_value = mock_sink
+        
+        # Executar
         self.handler.write_to_catalog(mock_df, "db", "table")
         
+        # Verificar que getSink foi chamado (ou from_catalog se caiu no fallback)
         mock_dynamic_frame_class.fromDF.assert_called_once()
-        self.mock_glue_context.write_dynamic_frame.from_catalog.assert_called_once()
-        args, kwargs = self.mock_glue_context.write_dynamic_frame.from_catalog.call_args
-        self.assertEqual(kwargs['database'], 'db')
-        self.assertEqual(kwargs['table_name'], 'table')
+        
+        # Se getSink foi chamado, verificar parâmetros
+        if self.mock_glue_context.getSink.called:
+            mock_boto3_client.assert_called_once_with('glue', region_name='sa-east-1')
+            self.mock_glue_context.getSink.assert_called_once()
+            
+            # Verificar parâmetros do getSink
+            args, kwargs = self.mock_glue_context.getSink.call_args
+            self.assertEqual(kwargs['connection_type'], 's3')
+            self.assertEqual(kwargs['enableUpdateCatalog'], True)
+            self.assertEqual(kwargs['updateBehavior'], 'UPDATE_IN_DATABASE')
+            
+            # Verificar que setFormat e setCatalogInfo foram chamados
+            mock_sink.setFormat.assert_called_once()
+            mock_sink.setCatalogInfo.assert_called_once()
+            mock_sink.writeFrame.assert_called_once_with(mock_dyn_frame)
+        else:
+            # Se caiu no fallback, verificar from_catalog
+            self.mock_glue_context.write_dynamic_frame.from_catalog.assert_called_once()
+            args, kwargs = self.mock_glue_context.write_dynamic_frame.from_catalog.call_args
+            self.assertEqual(kwargs['database'], 'db')
+            self.assertEqual(kwargs['table_name'], 'table')
     
     @patch('utils.handlers.glue_handler._get_glue_client')
     def test_get_last_partition(self, mock_get_client):

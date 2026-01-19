@@ -10,14 +10,12 @@ class TestMain(unittest.TestCase):
     @patch('src.main.AppConfig')
     @patch('src.main.GlueDataHandler')
     @patch('src.main.JourneyController')
-    @patch('src.main.DynamoDBHandler')
     @patch('src.main.ProcessorFactory')
     @patch('src.main.BusinessRuleOrchestrator')
     def test_main_success(
         self,
         mock_orchestrator_class,
         mock_factory_class,
-        mock_dynamodb_class,
         mock_journey_class,
         mock_glue_handler_class,
         mock_config_class,
@@ -37,7 +35,6 @@ class TestMain(unittest.TestCase):
         
         mock_config = MagicMock()
         mock_config.journey_table_name = 'journey_table'
-        mock_config.congregado_table_name = 'congregado_table'
         mock_config.aws_region = 'us-east-1'
         mock_config.default_output_format = 'parquet'
         # Mock consolidacoes_tabelas para permitir execução
@@ -59,8 +56,7 @@ class TestMain(unittest.TestCase):
         mock_journey_controller = MagicMock()
         mock_journey_class.return_value = mock_journey_controller
         
-        mock_dynamodb_handler = MagicMock()
-        mock_dynamodb_class.return_value = mock_dynamodb_handler
+        # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
         
         # Mock ProcessorFactory
         mock_processor = MagicMock()
@@ -85,7 +81,7 @@ class TestMain(unittest.TestCase):
         mock_config_class.assert_called_once()
         mock_glue_handler_class.assert_called_once_with(mock_glue_context)
         mock_journey_class.assert_called_once()
-        mock_dynamodb_class.assert_called_once()
+        # DynamoDBHandler não é mais necessário
         mock_factory_class.create.assert_called_once()
         # execute_rule é chamado para cada consolidação configurada
         self.assertGreaterEqual(mock_orchestrator.execute_rule.call_count, 1)

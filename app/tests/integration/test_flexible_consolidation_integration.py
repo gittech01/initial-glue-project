@@ -9,7 +9,7 @@ from utils.business.flexible_consolidation_processor import FlexibleConsolidatio
 from utils.config.settings import AppConfig
 from utils.handlers.glue_handler import GlueDataHandler
 from utils.journey_controller import JourneyController
-from utils.dynamodb_handler import DynamoDBHandler
+# DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
 
 # Configurar região AWS para testes
 os.environ['AWS_DEFAULT_REGION'] = 'sa-east-1'
@@ -81,7 +81,8 @@ def test_full_integration_flow(spark, config, mock_glue_context, test_dataframes
     # Criar handlers reais com mocks
     glue_handler = GlueDataHandler(mock_glue_context)
     journey_controller = JourneyController(table_name='test_journey', region_name='sa-east-1')
-    dynamodb_handler = DynamoDBHandler(table_name='test_congregado', region_name='sa-east-1')
+    # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
+    dynamodb_handler = None
     
     # Mock dos métodos de leitura - usar generator para evitar StopIteration
     glue_handler.get_last_partition = MagicMock(return_value='20240116')
@@ -92,13 +93,7 @@ def test_full_integration_flow(spark, config, mock_glue_context, test_dataframes
             return test_dataframes['sor']
         return test_dataframes['sot']
     glue_handler.read_from_catalog = MagicMock(side_effect=read_catalog_side_effect)
-    
-    # Mock do DynamoDB
-    dynamodb_handler.save_congregado = MagicMock(return_value={
-        'id': 'test_id',
-        'version': 1,
-        'status': 'created'
-    })
+    glue_handler.write_to_catalog = MagicMock()  # Mock do write_to_catalog
     
     # Criar processador
     processor = FlexibleConsolidationProcessor(
@@ -117,8 +112,8 @@ def test_full_integration_flow(spark, config, mock_glue_context, test_dataframes
     # Validações
     assert result['status'] == 'success'
     assert 'record_count' in result
-    assert 'congregado_id' in result
-    assert dynamodb_handler.save_congregado.called
+    # congregado_id não é mais retornado - dados são salvos no S3/Glue Catalog
+    # save_congregado não é mais chamado
     
     # Verificar que read_from_catalog foi chamado
     assert glue_handler.read_from_catalog.call_count >= 2
@@ -128,7 +123,8 @@ def test_integration_with_auxiliaries(spark, config, mock_glue_context, test_dat
     """Testa integração com auxiliares e joins."""
     glue_handler = GlueDataHandler(mock_glue_context)
     journey_controller = JourneyController(table_name='test_journey', region_name='sa-east-1')
-    dynamodb_handler = DynamoDBHandler(table_name='test_congregado', region_name='sa-east-1')
+    # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
+    dynamodb_handler = None
     
     # Mock para múltiplas leituras (principal + auxiliares)
     glue_handler.get_last_partition = MagicMock(return_value='20240116')
@@ -138,11 +134,7 @@ def test_integration_with_auxiliaries(spark, config, mock_glue_context, test_dat
             return test_dataframes['sor']
         return test_dataframes['sot']
     glue_handler.read_from_catalog = MagicMock(side_effect=read_catalog_side_effect_aux)
-    
-    dynamodb_handler.save_congregado = MagicMock(return_value={
-        'id': 'test_id',
-        'version': 1
-    })
+    glue_handler.write_to_catalog = MagicMock()  # Mock do write_to_catalog
     
     processor = FlexibleConsolidationProcessor(
         glue_handler=glue_handler,
@@ -165,7 +157,8 @@ def test_integration_with_ranking(spark, config, mock_glue_context, test_datafra
     """Testa integração com ranking e consolidação."""
     glue_handler = GlueDataHandler(mock_glue_context)
     journey_controller = JourneyController(table_name='test_journey', region_name='sa-east-1')
-    dynamodb_handler = DynamoDBHandler(table_name='test_congregado', region_name='sa-east-1')
+    # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
+    dynamodb_handler = None
     
     glue_handler.get_last_partition = MagicMock(return_value='20240116')
     def read_catalog_side_effect_simple(*args, **kwargs):
@@ -174,11 +167,7 @@ def test_integration_with_ranking(spark, config, mock_glue_context, test_datafra
             return test_dataframes['sor']
         return test_dataframes['sot']
     glue_handler.read_from_catalog = MagicMock(side_effect=read_catalog_side_effect_simple)
-    
-    dynamodb_handler.save_congregado = MagicMock(return_value={
-        'id': 'test_id',
-        'version': 1
-    })
+    glue_handler.write_to_catalog = MagicMock()  # Mock do write_to_catalog
     
     processor = FlexibleConsolidationProcessor(
         glue_handler=glue_handler,
@@ -209,7 +198,8 @@ def test_integration_with_journey_controller(spark, config, mock_glue_context, t
     """Testa integração com JourneyController."""
     glue_handler = GlueDataHandler(mock_glue_context)
     journey_controller = JourneyController(table_name='test_journey', region_name='sa-east-1')
-    dynamodb_handler = DynamoDBHandler(table_name='test_congregado', region_name='sa-east-1')
+    # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
+    dynamodb_handler = None
     
     glue_handler.get_last_partition = MagicMock(return_value='20240116')
     def read_catalog_side_effect_simple(*args, **kwargs):
@@ -218,11 +208,7 @@ def test_integration_with_journey_controller(spark, config, mock_glue_context, t
             return test_dataframes['sor']
         return test_dataframes['sot']
     glue_handler.read_from_catalog = MagicMock(side_effect=read_catalog_side_effect_simple)
-    
-    dynamodb_handler.save_congregado = MagicMock(return_value={
-        'id': 'test_id',
-        'version': 1
-    })
+    glue_handler.write_to_catalog = MagicMock()  # Mock do write_to_catalog
     
     processor = FlexibleConsolidationProcessor(
         glue_handler=glue_handler,
