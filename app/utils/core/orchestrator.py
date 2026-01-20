@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any, Callable
 from enum import Enum
 
 from utils.journey_controller import JourneyController, JourneyStatus
-from utils.business.base_processor import BaseBusinessProcessor
+from utils.core.base_processor import BaseBusinessProcessor
 
 
 logger = logging.getLogger(__name__)

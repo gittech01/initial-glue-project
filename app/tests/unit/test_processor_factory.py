@@ -2,8 +2,8 @@
 import unittest
 import os
 from unittest.mock import MagicMock
-from utils.business.processor_factory import ProcessorFactory
-from utils.business.base_processor import BaseBusinessProcessor
+from utils.core.processor_factory import ProcessorFactory
+from utils.core.base_processor import BaseBusinessProcessor
 from utils.config.settings import AppConfig
 
 # Configurar região AWS para testes

@@ -38,8 +38,8 @@ except ImportError:
 from utils.config.settings import AppConfig
 from utils.handlers.glue_handler import GlueDataHandler
 from utils.journey_controller import JourneyController
-from utils.business.processor_factory import ProcessorFactory
-from utils.business.orchestrator import BusinessRuleOrchestrator
+from utils.core.processor_factory import ProcessorFactory
+from utils.core.orchestrator import BusinessRuleOrchestrator
 
 
 # Configurar logging

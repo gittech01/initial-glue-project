@@ -11,7 +11,7 @@ from utils.handlers.glue_handler import GlueDataHandler
 from utils.journey_controller import JourneyController
 from utils.dynamodb_handler import DynamoDBHandler
 from utils.config.settings import AppConfig
-from utils.business.base_processor import BaseBusinessProcessor
+from utils.core.base_processor import BaseBusinessProcessor
 
 
 logger = logging.getLogger(__name__)

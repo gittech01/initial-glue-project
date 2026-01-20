@@ -2,8 +2,8 @@
 import unittest
 import os
 from unittest.mock import MagicMock
-from utils.business.orchestrator import BusinessRuleOrchestrator, ExecutionResult
-from utils.business.base_processor import BaseBusinessProcessor
+from utils.core.orchestrator import BusinessRuleOrchestrator, ExecutionResult
+from utils.core.base_processor import BaseBusinessProcessor
 from utils.config.settings import AppConfig
 
 # Configurar região AWS para testes

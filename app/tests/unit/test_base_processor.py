@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import os
 from pyspark.sql import SparkSession
-from utils.business.base_processor import BaseBusinessProcessor
+from utils.core.base_processor import BaseBusinessProcessor
 from utils.config.settings import AppConfig
 
 # Configurar região AWS para testes

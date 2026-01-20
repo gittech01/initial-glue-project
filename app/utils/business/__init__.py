@@ -1,23 +1,17 @@
-"""Módulo de regras de negócio da aplicação."""
+"""
+Business - Regras de negócio da aplicação.
 
-from .base_processor import BaseBusinessProcessor
-from .processor_factory import ProcessorFactory
-from .orchestrator import BusinessRuleOrchestrator, ExecutionResult
+Contém implementações específicas de regras de negócio:
+- FlexibleConsolidationProcessor: Processador de consolidação flexível
+
+As regras de negócio herdam de utils.core.BaseBusinessProcessor.
+"""
 
 # Importar FlexibleConsolidationProcessor se disponível
 try:
     from .flexible_consolidation_processor import FlexibleConsolidationProcessor
     __all__ = [
-        'BaseBusinessProcessor',
-        'FlexibleConsolidationProcessor',
-        'ProcessorFactory',
-        'BusinessRuleOrchestrator',
-        'ExecutionResult'
+        'FlexibleConsolidationProcessor'
     ]
 except ImportError:
-    __all__ = [
-        'BaseBusinessProcessor',
-        'ProcessorFactory',
-        'BusinessRuleOrchestrator',
-        'ExecutionResult'
-    ]
+    __all__ = []
