@@ -202,31 +202,78 @@ class JourneyController:
         Returns:
             ID da jornada (novo ou existente)
         """
-        # Se idempotency_key for fornecida, usar como journey_id se journey_id não foi fornecido
-        # Isso garante que mesma idempotency_key sempre retorne mesmo journey_id
-        if idempotency_key and not journey_id:
-            journey_id = idempotency_key
+        # Se idempotency_key for fornecida, ela tem prioridade para garantir idempotência
+        # Buscar jornada existente por idempotency_key primeiro
+        if idempotency_key:
+            # Buscar jornadas existentes que tenham essa idempotency_key
+            # Em modo em memória, precisamos fazer uma busca linear
+            if not self.dynamodb:
+                # Buscar em todas as jornadas em memória
+                for stored_journey_id, stored_journey in self._in_memory_store.items():
+                    if stored_journey.get('idempotency_key') == idempotency_key:
+                        # Jornada existente encontrada com essa idempotency_key
+                        self.logger.info(
+                            f"Jornada existente encontrada com idempotency_key: {idempotency_key} "
+                            f"(journey_id: {stored_journey_id})"
+                        )
+                        return stored_journey_id
+            else:
+                # Em DynamoDB, seria necessário GSI ou scan para buscar por idempotency_key
+                # Por enquanto, se journey_id foi fornecido, tentar buscar por ele primeiro
+                # Mas se idempotency_key for diferente, precisamos fazer scan
+                # Por simplicidade e para garantir idempotência, se idempotency_key foi fornecida,
+                # usamos ela como journey_id (a menos que já exista uma jornada com journey_id diferente)
+                if journey_id:
+                    # Verificar se a jornada com esse journey_id tem a mesma idempotency_key
+                    existing = self._get_item(journey_id)
+                    if existing and existing.get('idempotency_key') == idempotency_key:
+                        # Mesma jornada, retornar
+                        self.logger.info(
+                            f"Jornada existente encontrada: journey_id={journey_id}, "
+                            f"idempotency_key={idempotency_key}"
+                        )
+                        return journey_id
+                    elif existing and existing.get('idempotency_key') != idempotency_key:
+                        # Conflito: journey_id existe mas com idempotency_key diferente
+                        # Para garantir idempotência, devemos buscar por idempotency_key
+                        # Como não temos GSI, vamos usar idempotency_key como journey_id
+                        self.logger.warning(
+                            f"Conflito detectado: journey_id={journey_id} existe mas com "
+                            f"idempotency_key diferente. Usando idempotency_key={idempotency_key} "
+                            "como journey_id para garantir idempotência."
+                        )
+                        journey_id = idempotency_key
+                else:
+                    # Se journey_id não foi fornecido, usar idempotency_key como journey_id
+                    journey_id = idempotency_key
+                
+                # Verificar se existe jornada com esse journey_id (que agora é igual a idempotency_key)
+                existing = self._get_item(journey_id)
+                if existing and existing.get('idempotency_key') == idempotency_key:
+                    self.logger.info(
+                        f"Jornada existente encontrada com idempotency_key: {idempotency_key} "
+                        f"(journey_id: {journey_id})"
+                    )
+                    return journey_id
         
-        # Se idempotency_key for fornecida, verificar se já existe jornada com esse journey_id
-        if idempotency_key and not self.dynamodb:
-            # Em modo em memória, buscar por journey_id (que é igual a idempotency_key)
-            existing = self._get_item(journey_id)
-            if existing and existing.get('idempotency_key') == idempotency_key:
-                # Se já existe jornada com essa chave, retornar o journey_id existente
-                self.logger.info(f"Jornada existente encontrada com idempotency_key: {idempotency_key}")
-                return journey_id
-        elif idempotency_key and self.dynamodb:
-            # Em DynamoDB, seria necessário GSI ou scan (não implementado aqui)
-            # Por enquanto, usar journey_id se fornecido
-            pass
-        
-        # Se não encontrou jornada existente, criar nova
+        # Se journey_id ainda não foi definido, gerar novo
         if not journey_id:
             journey_id = str(uuid.uuid4())
         
-        # Verificar se a jornada já existe
+        # Verificar se a jornada já existe (verificação final antes de criar)
         existing = self._get_item(journey_id)
         if existing:
+            # Se já existe, verificar se a idempotency_key corresponde (se fornecida)
+            if idempotency_key and existing.get('idempotency_key') != idempotency_key:
+                # Conflito: jornada existe mas com idempotency_key diferente
+                # Isso não deveria acontecer com a lógica acima, mas é uma verificação de segurança
+                self.logger.error(
+                    f"Conflito crítico: jornada {journey_id} existe mas com idempotency_key diferente. "
+                    f"Esperado: {idempotency_key}, Encontrado: {existing.get('idempotency_key')}"
+                )
+                # Para garantir idempotência, retornar a jornada existente mesmo com idempotency_key diferente
+                # Isso previne criação de jornadas duplicadas
+            
             status = existing.get('status')
             if status == JourneyStatus.COMPLETED.value:
                 self.logger.info(f"Jornada {journey_id} já foi completada. Retornando ID existente.")
