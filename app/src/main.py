@@ -128,21 +128,21 @@ def main():
         logger.info(f"Processador criado: {processor.get_processor_name()}")
         
         # Determinar quais consolidações executar
-        tabela_consolidada = args.get('tabela_consolidada')
+        arg_tabela_consolidada = args.get('tabela_consolidada')
         database = args.get('database')
         
         if not database:
             raise ValueError("Parâmetro 'database' é obrigatório")
         
         # Se tabela_consolidada foi especificada, executar apenas essa
-        if tabela_consolidada:
-            if tabela_consolidada not in consolidacoes_config:
+        if arg_tabela_consolidada:
+            if arg_tabela_consolidada not in consolidacoes_config:
                 raise ValueError(
-                    f"Tabela consolidada '{tabela_consolidada}' não encontrada em consolidacoes_tabelas. "
+                    f"Tabela consolidada '{arg_tabela_consolidada}' não encontrada em consolidacoes_tabelas. "
                     f"Disponíveis: {list(consolidacoes_config.keys())}"
                 )
-            tabelas_a_processar = [tabela_consolidada]
-            logger.info(f"Executando consolidação específica: {tabela_consolidada}")
+            tabelas_a_processar = [arg_tabela_consolidada]
+            logger.info(f"Executando consolidação específica: {arg_tabela_consolidada}")
         else:
             # Executar todas as consolidações configuradas
             tabelas_a_processar = list(consolidacoes_config.keys())
