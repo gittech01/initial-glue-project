@@ -86,25 +86,39 @@ class JourneyController:
         self._ensure_table_exists()
     
     def _ensure_table_exists(self):
-        """Garante que a tabela DynamoDB existe. Se não existir, cria em memória."""
+        """Garante que a tabela DynamoDB existe. Se não existir, usa armazenamento em memória."""
         if not self.dynamodb:
             # Garantir que _in_memory_store existe se não tiver DynamoDB
             if not hasattr(self, '_in_memory_store'):
                 self._in_memory_store = {}
+            self.table = None
             return
         
         try:
             self.table = self.dynamodb.Table(self.table_name)
             # Verificar se a tabela existe fazendo uma operação simples
             self.table.meta.client.describe_table(TableName=self.table_name)
+            self.logger.info(f"Tabela DynamoDB '{self.table_name}' encontrada e pronta para uso.")
         except ClientError as e:
-            if e.response.get('Error', {}).get('Code') == 'ResourceNotFoundException':
+            error_code = e.response.get('Error', {}).get('Code')
+            if error_code == 'ResourceNotFoundException':
                 self.logger.warning(
-                    f"Tabela {self.table_name} não encontrada. "
+                    f"Tabela DynamoDB '{self.table_name}' não encontrada. "
                     "Usando armazenamento em memória. "
-                    "Crie a tabela com chave primária 'journey_id' (String)."
+                    f"Para usar DynamoDB, crie a tabela '{self.table_name}' com chave primária 'journey_id' (String)."
                 )
                 self.dynamodb = None
+                self.table = None
+                if not hasattr(self, '_in_memory_store'):
+                    self._in_memory_store = {}
+            else:
+                # Outro erro do DynamoDB (ex: AccessDeniedException)
+                self.logger.warning(
+                    f"Erro ao acessar DynamoDB ({error_code}): {e}. "
+                    "Usando armazenamento em memória."
+                )
+                self.dynamodb = None
+                self.table = None
                 if not hasattr(self, '_in_memory_store'):
                     self._in_memory_store = {}
         except Exception as e:
@@ -114,36 +128,72 @@ class JourneyController:
                 "Usando armazenamento em memória."
             )
             self.dynamodb = None
+            self.table = None
             if not hasattr(self, '_in_memory_store'):
                 self._in_memory_store = {}
     
     def _get_item(self, journey_id: str) -> Optional[Dict]:
         """Recupera um item do DynamoDB ou do armazenamento em memória."""
-        if not self.dynamodb:
+        if not self.dynamodb or not self.table:
+            # Usar armazenamento em memória
+            if not hasattr(self, '_in_memory_store'):
+                self._in_memory_store = {}
             return self._in_memory_store.get(journey_id)
         
         try:
             response = self.table.get_item(Key={'journey_id': journey_id})
             return response.get('Item')
         except ClientError as e:
-            self.logger.error(f"Erro ao recuperar jornada {journey_id}: {e}")
-            return None
+            error_code = e.response.get('Error', {}).get('Code')
+            if error_code == 'ResourceNotFoundException':
+                # Tabela não existe, fallback para memória
+                self.logger.warning(
+                    f"Tabela '{self.table_name}' não encontrada durante GetItem. "
+                    "Usando armazenamento em memória."
+                )
+                self.dynamodb = None
+                self.table = None
+                if not hasattr(self, '_in_memory_store'):
+                    self._in_memory_store = {}
+                return self._in_memory_store.get(journey_id)
+            else:
+                self.logger.error(f"Erro ao recuperar jornada {journey_id}: {e}")
+                return None
     
     def _put_item(self, item: Dict):
         """Salva um item no DynamoDB ou no armazenamento em memória."""
-        if not self.dynamodb:
+        if not self.dynamodb or not self.table:
+            # Usar armazenamento em memória
+            if not hasattr(self, '_in_memory_store'):
+                self._in_memory_store = {}
             self._in_memory_store[item['journey_id']] = item
             return
         
         try:
             self.table.put_item(Item=item)
         except ClientError as e:
-            self.logger.error(f"Erro ao salvar jornada {item.get('journey_id')}: {e}")
-            raise
+            error_code = e.response.get('Error', {}).get('Code')
+            if error_code == 'ResourceNotFoundException':
+                # Tabela não existe, fallback para memória
+                self.logger.warning(
+                    f"Tabela '{self.table_name}' não encontrada durante PutItem. "
+                    "Usando armazenamento em memória."
+                )
+                self.dynamodb = None
+                self.table = None
+                if not hasattr(self, '_in_memory_store'):
+                    self._in_memory_store = {}
+                self._in_memory_store[item['journey_id']] = item
+            else:
+                self.logger.error(f"Erro ao salvar jornada {item.get('journey_id')}: {e}")
+                raise
     
     def _update_item(self, journey_id: str, update_expression: str, expression_values: Dict, expression_names: Dict = None):
         """Atualiza um item no DynamoDB ou no armazenamento em memória."""
-        if not self.dynamodb:
+        if not self.dynamodb or not self.table:
+            # Usar armazenamento em memória
+            if not hasattr(self, '_in_memory_store'):
+                self._in_memory_store = {}
             item = self._in_memory_store.get(journey_id, {})
             if not item:
                 return
@@ -182,8 +232,35 @@ class JourneyController:
                 kwargs['ExpressionAttributeNames'] = expression_names
             self.table.update_item(**kwargs)
         except ClientError as e:
-            self.logger.error(f"Erro ao atualizar jornada {journey_id}: {e}")
-            raise
+            error_code = e.response.get('Error', {}).get('Code')
+            if error_code == 'ResourceNotFoundException':
+                # Tabela não existe, fallback para memória
+                self.logger.warning(
+                    f"Tabela '{self.table_name}' não encontrada durante UpdateItem. "
+                    "Usando armazenamento em memória."
+                )
+                self.dynamodb = None
+                self.table = None
+                if not hasattr(self, '_in_memory_store'):
+                    self._in_memory_store = {}
+                # Reprocessar update em memória
+                item = self._in_memory_store.get(journey_id, {})
+                if item:
+                    if 'SET' in update_expression:
+                        if ':status' in expression_values:
+                            item['status'] = expression_values[':status']
+                        if ':updated_at' in expression_values:
+                            item['updated_at'] = expression_values[':updated_at']
+                        if ':error' in expression_values:
+                            item['error_message'] = expression_values[':error']
+                        if ':result' in expression_values:
+                            item['result'] = expression_values[':result']
+                    if 'ADD' in update_expression and ':inc' in expression_values:
+                        item['retry_count'] = item.get('retry_count', 0) + expression_values[':inc']
+                    self._in_memory_store[journey_id] = item
+            else:
+                self.logger.error(f"Erro ao atualizar jornada {journey_id}: {e}")
+                raise
     
     def start_journey(
         self,

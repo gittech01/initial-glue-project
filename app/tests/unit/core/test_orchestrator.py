@@ -1,4 +1,4 @@
-"""Testes unitários para utils/business/orchestrator.py"""
+"""Testes unitários para utils/core/orchestrator.py"""
 import unittest
 import os
 from unittest.mock import MagicMock

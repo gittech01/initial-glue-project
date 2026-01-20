@@ -9,7 +9,6 @@ from typing import Dict, Type, Optional
 
 from utils.handlers.glue_handler import GlueDataHandler
 from utils.journey_controller import JourneyController
-from utils.dynamodb_handler import DynamoDBHandler
 from utils.config.settings import AppConfig
 from utils.core.base_processor import BaseBusinessProcessor
 
@@ -55,7 +54,6 @@ class ProcessorFactory:
         processor_type: str,
         glue_handler: GlueDataHandler,
         journey_controller: JourneyController,
-        dynamodb_handler: DynamoDBHandler,
         config: AppConfig
     ) -> BaseBusinessProcessor:
         """
@@ -64,8 +62,7 @@ class ProcessorFactory:
         Args:
             processor_type: Tipo do processador (ex: 'data_processor', 'sales_analyzer')
             glue_handler: Handler para operações Glue
-            journey_controller: Controller de jornada
-            dynamodb_handler: Handler DynamoDB
+            journey_controller: Controller de jornada (usa DynamoDB apenas para métricas de jornada)
             config: Configurações
         
         Returns:
@@ -89,7 +86,6 @@ class ProcessorFactory:
         return processor_class(
             glue_handler=glue_handler,
             journey_controller=journey_controller,
-            dynamodb_handler=dynamodb_handler,
             config=config
         )
     

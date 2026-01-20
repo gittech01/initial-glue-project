@@ -1,4 +1,4 @@
-"""Testes unitários para utils/business/base_processor.py"""
+"""Testes unitários para utils/core/base_processor.py"""
 import unittest
 from unittest.mock import MagicMock, patch
 import os

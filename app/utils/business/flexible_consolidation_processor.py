@@ -43,10 +43,9 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         self,
         glue_handler,
         journey_controller,
-        dynamodb_handler,
         config
     ):
-        super().__init__(glue_handler, journey_controller, dynamodb_handler, config)
+        super().__init__(glue_handler, journey_controller, config)
         
         # Carregar configurações de consolidação do settings.py
         self.consolidacoes_config = getattr(config, 'consolidacoes_tabelas', {})
@@ -452,15 +451,12 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
         # Converter DataFrame para Dict para compatibilidade com BaseBusinessProcessor
         # O DataFrame será usado em _write_output se necessário
         record_count = df_ranked.count()
-        sample_data = df_ranked.limit(1000).toPandas().to_dict('records') if record_count > 0 else []
-        
         return {
             'df_consolidado': df_ranked,  # DataFrame para uso em _write_output
             'record_count': record_count,
             'tabela_consolidada': tabela_consolidada,
             'chaves_principais': chaves_principais,
-            'campos_decisao': campos_decisao,
-            'sample_data': sample_data  # Amostra para congregado
+            'campos_decisao': campos_decisao
         }
     
     def _join_com_registros_completos(
@@ -584,25 +580,6 @@ class FlexibleConsolidationProcessor(BaseBusinessProcessor):
             resultado = resultado.unionByName(df, allowMissingColumns=True)
         
         return resultado
-    
-    # -------------------------------------------------------------------------
-    # Congregado Methods (BaseBusinessProcessor)
-    # -------------------------------------------------------------------------
-    
-    def _get_congregado_key(self, **kwargs) -> str:
-        """Gera chave primária para congregado."""
-        tabela_consolidada = kwargs.get('tabela_consolidada', 'unknown')
-        database = kwargs.get('database', 'default')
-        return f"{database}_{tabela_consolidada}"
-    
-    def _get_congregado_metadata(self, **kwargs) -> Dict:
-        """Gera metadados para congregado."""
-        return {
-            'processor_type': self.get_processor_name(),
-            'tabela_consolidada': kwargs.get('tabela_consolidada'),
-            'database': kwargs.get('database'),
-            'origens': list(kwargs.get('data', {}).keys()) if 'data' in kwargs else []
-        }
     
     def _should_write_output(self, **kwargs) -> bool:
         """

@@ -11,7 +11,6 @@ import logging
 
 from utils.handlers.glue_handler import GlueDataHandler
 from utils.journey_controller import JourneyController
-from utils.dynamodb_handler import DynamoDBHandler
 from utils.config.settings import AppConfig
 
 
@@ -37,21 +36,18 @@ class BaseBusinessProcessor(ABC):
         self,
         glue_handler: GlueDataHandler,
         journey_controller: JourneyController,
-        dynamodb_handler: Optional[DynamoDBHandler] = None,
-        config: AppConfig = None
+        config: Optional[AppConfig] = None
     ):
         """
         Inicializa o processador base.
         
         Args:
             glue_handler: Handler para operações Glue
-            journey_controller: Controller de jornada para idempotência e retry
-            dynamodb_handler: Handler DynamoDB (opcional, não é mais usado - mantido para compatibilidade)
+            journey_controller: Controller de jornada para idempotência e retry (usa DynamoDB apenas para métricas de jornada)
             config: Configurações da aplicação
         """
         self.glue_handler = glue_handler
         self.journey_controller = journey_controller
-        self.dynamodb_handler = dynamodb_handler  # Mantido para compatibilidade, não é mais usado
         self.config = config
         logger.info(f"{self.__class__.__name__} inicializado")
     
@@ -148,18 +144,6 @@ class BaseBusinessProcessor(ABC):
         """
         pass
     
-    def _save_congregado(self, transformed_data: Dict, **kwargs) -> Dict:
-        """
-        DEPRECATED: Este método não é mais usado.
-        
-        Os dados são salvos diretamente no S3 e Glue Catalog via _write_output.
-        O controle de jornada é feito via JourneyController no DynamoDB.
-        
-        Mantido apenas para compatibilidade com código legado.
-        """
-        logger.warning("_save_congregado está deprecated. Dados são salvos via _write_output no S3/Glue Catalog.")
-        return {'id': None, 'status': 'deprecated'}
-    
     def _write_output(self, df: DataFrame, transformed_data: Dict, output_path: str, **kwargs):
         """
         Hook method: Escrever resultado.
@@ -191,35 +175,6 @@ class BaseBusinessProcessor(ABC):
             True se deve escrever output, False caso contrário
         """
         return True
-    
-    @abstractmethod
-    def _get_congregado_key(self, **kwargs) -> str:
-        """
-        Hook method: Gera chave primária para congregado.
-        
-        Deve ser implementado por subclasses.
-        
-        Args:
-            **kwargs: Parâmetros específicos
-        
-        Returns:
-            Chave primária para o congregado
-        """
-        pass
-    
-    def _get_congregado_metadata(self, **kwargs) -> Dict:
-        """
-        Hook method: Gera metadados para congregado.
-        
-        Pode ser sobrescrito por subclasses para metadados específicos.
-        
-        Args:
-            **kwargs: Parâmetros específicos
-        
-        Returns:
-            Dicionário com metadados
-        """
-        return { 'processor_type': self.__class__.__name__ }
     
     def get_processor_name(self) -> str:
         """Retorna o nome do processador (Nome da Classe)."""

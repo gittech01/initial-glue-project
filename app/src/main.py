@@ -24,14 +24,9 @@ except ImportError:
     def getResolvedOptions(args, options):
         return {opt: f"mock_{opt}" for opt in options}
     
-    class GlueContext:
-        pass
-    
-    class Job:
-        pass
-    
-    class SparkContext:
-        pass
+    class GlueContext: pass
+    class Job: pass
+    class SparkContext: pass
     
     logging.warning("Bibliotecas AWS Glue não encontradas. Modo de desenvolvimento ativado.")
 
@@ -102,13 +97,13 @@ def main():
         
         # Inicializar handlers
         glue_handler = GlueDataHandler(glue_context)
+        
+        # JourneyController usa DynamoDB APENAS para métricas de jornada (idempotência e retry)
+        # Uma única tabela: journey_control (configurada em config.journey_table_name)
         journey_controller = JourneyController(
             table_name=config.journey_table_name,
             region_name=config.aws_region
         )
-        # DynamoDBHandler não é mais necessário - dados são salvos no S3/Glue Catalog
-        # Apenas JourneyController usa DynamoDB para controle de jornada (idempotência e retry)
-        dynamodb_handler = None  # Mantido como None para compatibilidade com ProcessorFactory
         
         # Criar orquestrador (não interrompe fluxo em caso de falha)
         continue_on_error = args.get('continue_on_error', 'true').lower() == 'true'
@@ -118,11 +113,11 @@ def main():
         )
         
         # Criar processador de consolidação
+        # DynamoDBHandler foi removido - dados consolidados são salvos apenas no S3/Glue Catalog
         processor = ProcessorFactory.create(
             processor_type='flexible_consolidation',
             glue_handler=glue_handler,
             journey_controller=journey_controller,
-            dynamodb_handler=dynamodb_handler,
             config=config
         )
         logger.info(f"Processador criado: {processor.get_processor_name()}")
